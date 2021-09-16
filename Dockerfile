@@ -15,9 +15,10 @@ RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositorie
 # Install packages
 RUN apk update && \
     apk add --update --no-cache openrc redis bash git autoconf g++ tzdata nano openssh-client automake \
-    nghttp2-dev ca-certificates zlib zlib-dev brotli brotli-dev zstd zstd-dev linux-headers libtool util-linux
+    nghttp2-dev ca-certificates zlib zlib-dev brotli brotli-dev zstd zstd-dev linux-headers libtool util-linux file
 
-RUN [[ $(getconf LONG_BIT) = "32" ]] && configtmp="setarch i386 ./config -m32" || configtmp="./config " && \
+RUN file /bin/busybox && \
+    [[ $(getconf LONG_BIT) = "32" && -z $(file /bin/busybox | grep "arm") ]] && configtmp="setarch i386 ./config -m32" || configtmp="./config " && \
     apk add --update --no-cache --virtual curldeps make perl && \
     wget https://curl.se/download/curl-$CURL_VERSION.tar.bz2 && \
     git clone --depth 1 -b OpenSSL_1_1_1l+quic https://github.com/quictls/openssl && \
