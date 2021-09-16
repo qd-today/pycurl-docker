@@ -15,17 +15,21 @@ RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositorie
 # Install packages
 RUN apk update && \
     apk add --update --no-cache openrc redis bash git autoconf g++ tzdata nano openssh-client automake \
-    nghttp2-dev ca-certificates zlib zlib-dev brotli brotli-dev zstd zstd-dev linux-headers libtool
+    nghttp2-dev ca-certificates zlib zlib-dev brotli brotli-dev zstd zstd-dev linux-headers libtool util-linux
 
-RUN apk add --update --no-cache --virtual curldeps make perl && \
+RUN [[ $(getconf LONG_BIT) = "32" ]] && configtmp="setarch i386 ./config -m32" || configtmp="./config " && \
+    apk add --update --no-cache --virtual curldeps make perl && \
+    wget https://curl.se/download/curl-$CURL_VERSION.tar.bz2 && \
     git clone --depth 1 -b OpenSSL_1_1_1l+quic https://github.com/quictls/openssl && \
+    git clone https://github.com/ngtcp2/nghttp3 && \
+    git clone https://github.com/ngtcp2/ngtcp2 && \
     cd openssl && \
-    ./config enable-tls1_3 --prefix=/usr && \
+    echo $configtmp enable-tls1_3 --prefix=/usr && \
+    $configtmp enable-tls1_3 --prefix=/usr && \
     make && \
     make install_sw && \
     cd .. && \
     rm -r openssl && \
-    git clone https://github.com/ngtcp2/nghttp3 && \
     cd nghttp3 && \
     autoreconf -i && \
     ./configure --prefix=/usr --enable-lib-only && \
@@ -33,7 +37,6 @@ RUN apk add --update --no-cache --virtual curldeps make perl && \
     make install && \
     cd .. && \
     rm -r nghttp3 && \
-    git clone https://github.com/ngtcp2/ngtcp2 && \
     cd ngtcp2 && \
     autoreconf -i && \
     ./configure PKG_CONFIG_PATH=/usr/lib/pkgconfig:/usr/lib/pkgconfig LDFLAGS="-Wl,-rpath,/usr/lib" --prefix=/usr --enable-lib-only && \
@@ -41,7 +44,6 @@ RUN apk add --update --no-cache --virtual curldeps make perl && \
     make install && \
     cd .. && \
     rm -r ngtcp2 && \
-    wget https://curl.haxx.se/download/curl-$CURL_VERSION.tar.bz2 && \
     tar xjvf curl-$CURL_VERSION.tar.bz2 && \
     rm curl-$CURL_VERSION.tar.bz2 && \
     cd curl-$CURL_VERSION && \
@@ -65,9 +67,9 @@ RUN apk add --update --no-cache --virtual curldeps make perl && \
     apk del curldeps
     
 # Pip install modules
-RUN pip install --upgrade setuptools \
-    && pip install --upgrade wheel \
-    && pip install pycurl \
-    && rm -rf /var/cache/apk/* \
-    && rm -rf /usr/share/man/* 
+RUN pip install --upgrade setuptools && \
+    pip install --upgrade wheel && \
+    pip install pycurl && \
+    rm -rf /var/cache/apk/* && \
+    rm -rf /usr/share/man/* 
 
