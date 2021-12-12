@@ -30,25 +30,25 @@ RUN file /bin/busybox && \
     make && \
     make install_sw && \
     cd .. && \
-    rm -r openssl && \
+    rm -rf openssl && \
     cd nghttp3 && \
     autoreconf -i && \
     ./configure --prefix=/usr --enable-lib-only && \
     make && \
     make install && \
     cd .. && \
-    rm -r nghttp3 && \
+    rm -rf nghttp3 && \
     cd ngtcp2 && \
     autoreconf -i && \
     ./configure PKG_CONFIG_PATH=/usr/lib/pkgconfig:/usr/lib/pkgconfig LDFLAGS="-Wl,-rpath,/usr/lib" --prefix=/usr --enable-lib-only && \
     make && \
     make install && \
     cd .. && \
-    rm -r ngtcp2 && \
+    rm -rf ngtcp2 && \
     tar xjvf curl-$CURL_VERSION.tar.bz2 && \
     rm curl-$CURL_VERSION.tar.bz2 && \
     cd curl-$CURL_VERSION && \
-    ./buildconf && \
+    autoreconf -fi && \
     LDFLAGS="-Wl,-rpath,/usr/lib" ./configure \
         --with-openssl=/usr \
         --with-nghttp2=/usr \
@@ -64,7 +64,7 @@ RUN file /bin/busybox && \
     make && \
     make install && \
     cd .. && \
-    rm -r curl-$CURL_VERSION && \
+    rm -rf curl-$CURL_VERSION && \
     apk del curldeps
     
 # Pip install modules
