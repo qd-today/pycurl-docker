@@ -7,7 +7,7 @@ LABEL org.opencontainers.image.source=https://github.com/qiandao-today/pycurl-do
 
 # Envirenment for pycurl
 ENV PYCURL_SSL_LIBRARY=openssl
-ENV CURL_VERSION 7.80.0
+ENV CURL_VERSION 7.81.0
 
 # 换源 & For nghttp2-dev, we need testing respository.
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositories && \
