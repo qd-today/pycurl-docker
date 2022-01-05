@@ -11,7 +11,6 @@ jobs:
   build:
       runs-on: ubuntu-latest
       name: Publish Package job
-      
       steps:
           - name: Checkout master
             uses: actions/checkout@master
