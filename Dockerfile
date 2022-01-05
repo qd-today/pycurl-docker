@@ -22,7 +22,7 @@ RUN file /bin/busybox && \
     [[ $(getconf LONG_BIT) = "32" && -z $(file /bin/busybox | grep "arm") ]] && configtmp="setarch i386 ./config -m32" || configtmp="./config " && \
     apk add --update --no-cache --virtual curldeps make perl && \
     wget https://curl.se/download/curl-$CURL_VERSION.tar.bz2 && \
-    git clone --depth 1 -b OpenSSL_1_1_1l+quic https://github.com/quictls/openssl && \
+    git clone --depth 1 -b OpenSSL_1_1_1m+quic https://github.com/quictls/openssl && \
     git clone https://github.com/ngtcp2/nghttp3 && \
     git clone https://github.com/ngtcp2/ngtcp2 && \
     cd openssl && \
