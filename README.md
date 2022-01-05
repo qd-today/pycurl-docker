@@ -1,6 +1,6 @@
 # **Pycurl-Docker**
 
-**Python:3.8-Alpine latest with pycurl**
+**Python:3.9-Alpine latest with pycurl**
 
 ## **Repository**
 
@@ -10,7 +10,7 @@
 
 ## **VERSION**
 
-- PYTHON_VERSION == 3.8
+- PYTHON_VERSION == 3.9
 - CURL_VERSION == 7.80.0
 - OPENSSL_VERSION == 1_1_1l+quic
 - PYCURL_VERSION == 7.44.1
