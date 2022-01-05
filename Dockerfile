@@ -16,7 +16,8 @@ RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositorie
 # Install packages
 RUN apk update && \
     apk add --update --no-cache openrc redis bash git autoconf g++ tzdata nano openssh-client automake \
-    nghttp2-dev ca-certificates zlib zlib-dev brotli brotli-dev zstd zstd-dev linux-headers libtool util-linux file
+    nghttp2-dev ca-certificates zlib zlib-dev brotli brotli-dev zstd zstd-dev linux-headers libtool util-linux file \
+    libidn2 libidn2-dev libgsasl libgsasl-dev krb5 krb5-dev
 
 RUN file /bin/busybox && \
     [[ $(getconf LONG_BIT) = "32" && -z $(file /bin/busybox | grep "arm") ]] && configtmp="setarch i386 ./config -m32" || configtmp="./config " && \
@@ -58,10 +59,11 @@ RUN file /bin/busybox && \
         --prefix=/usr \
         --enable-ipv6 \
         --enable-unix-sockets \
-        --without-libidn \
+        --with-libidn2 \
         --disable-static \
         --disable-ldap \
-        --with-pic && \
+        --with-pic \
+        --with-gssapi && \
     make && \
     make install && \
     cd .. && \
