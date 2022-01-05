@@ -1,8 +1,9 @@
 # 基础镜像
-FROM python:3.8-alpine
+FROM python:3.9-alpine
 
 # 维护者信息
 LABEL maintainer "a76yyyy <q981331502@163.com>"
+LABEL org.opencontainers.image.source=https://github.com/qiandao-today/pycurl-docker
 
 # Envirenment for pycurl
 ENV PYCURL_SSL_LIBRARY=openssl
