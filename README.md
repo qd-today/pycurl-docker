@@ -8,6 +8,10 @@
 
 **DockerHub :** [https://hub.docker.com/r/a76yyyy/pycurl](https://hub.docker.com/r/a76yyyy/pycurl)
 
+```bash
+docker pull a76yyyy/pycurl:latest
+```
+
 ## **VERSION**
 
 - PYTHON_VERSION == 3.9
