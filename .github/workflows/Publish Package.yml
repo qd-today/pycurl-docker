@@ -4,7 +4,7 @@ on:
     paths: 
       - 'Dockerfile'
       - '.github/workflows/**'
-    branches: [main]
+    branches: [default]
 
 jobs:
   build:
@@ -15,7 +15,7 @@ jobs:
             uses: actions/checkout@master
           - name: Publish Latest Package
             uses: ilteoood/docker_buildx@master
-            if: startsWith(github.repository, 'qiandao-today/pycurl-docker-default')
+            if: startsWith(github.repository, 'qiandao-today/pycurl-docker')
             with:
               publish: true
               imageName: ghcr.io/qiandao-today/pycurl-docker-default # dockerid/imageName
