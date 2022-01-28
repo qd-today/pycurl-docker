@@ -16,8 +16,9 @@ docker pull a76yyyy/pycurl:default-latest
 
 - PYTHON_VERSION == 3.9
 - CURL_VERSION == 7.81.0
-- OPENSSL_VERSION == 1.1.1l-r8
+- OPENSSL_VERSION == 1.1.1m-r1
 - PYCURL_VERSION == 7.44.1
+- ONNXRUNTIME_TAG == v1.10.0
 
 ```bash
 ./configure \
