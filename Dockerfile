@@ -12,13 +12,14 @@ ENV ONNXRUNTIME_TAG v1.10.0
 
 # 换源 & For nghttp2-dev, we need testing respository.
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositories && \
-    echo https://dl-cdn.alpinelinux.org/alpine/edge/testing >>/etc/apk/repositories 
+    echo https://dl-cdn.alpinelinux.org/alpine/edge/testing >>/etc/apk/repositories && \
+    echo https://dl-cdn.alpinelinux.org/alpine/edge/community >>/etc/apk/repositories
 
 # Install packages
 RUN apk update && \
     apk add --update --no-cache openrc redis bash git autoconf g++ tzdata nano openssh-client automake \
     nghttp2-dev ca-certificates zlib zlib-dev brotli brotli-dev zstd zstd-dev linux-headers libtool util-linux file \
-    libidn2 libidn2-dev libgsasl libgsasl-dev krb5 krb5-dev cmake make lapack-dev libexecinfo-dev openblas-dev
+    libidn2 libidn2-dev libgsasl libgsasl-dev krb5 krb5-dev cmake make lapack-dev libexecinfo-dev openblas-dev py3-numpy-dev
 
 RUN file /bin/busybox && \
     [[ $(getconf LONG_BIT) = "32" && -z $(file /bin/busybox | grep "arm") ]] && configtmp="setarch i386 ./config -m32" || configtmp="./config " && \
@@ -73,7 +74,7 @@ RUN file /bin/busybox && \
     
 # Pip install modules
 RUN pip install --upgrade setuptools wheel \
-    && pip install pycurl numpy 
+    && pip install pycurl
 
 # Pip install onnxruntime
 RUN set -ex && \
