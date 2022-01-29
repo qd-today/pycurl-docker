@@ -8,22 +8,74 @@ LABEL org.opencontainers.image.source=https://github.com/qiandao-today/pycurl-do
 # Envirenment for pycurl
 ENV PYCURL_SSL_LIBRARY=openssl
 ENV CURL_VERSION 7.81.0
+ENV NUMPY_VERSION 1.22.1
 ENV ONNXRUNTIME_TAG v1.10.0
 
 # 换源 & For nghttp2-dev, we need testing respository.
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositories && \
-    echo https://dl-cdn.alpinelinux.org/alpine/edge/testing >>/etc/apk/repositories && \
-    echo https://dl-cdn.alpinelinux.org/alpine/edge/community >>/etc/apk/repositories
+    echo https://dl-cdn.alpinelinux.org/alpine/edge/testing >>/etc/apk/repositories
 
 # Install packages
 RUN apk update && \
-    apk add --update --no-cache openrc redis bash git autoconf g++ tzdata nano openssh-client automake \
-    nghttp2-dev ca-certificates zlib zlib-dev brotli brotli-dev zstd zstd-dev linux-headers libtool util-linux file \
-    libidn2 libidn2-dev libgsasl libgsasl-dev krb5 krb5-dev cmake make lapack-dev libexecinfo-dev openblas-dev py3-numpy-dev
+    apk add --update --no-cache --virtual build_deps cmake make perl autoconf g++ automake && \
+    apk add --update --no-cache openrc redis bash git tzdata nano openssh-client \
+    nghttp2-dev ca-certificates zlib-dev brotli-dev zstd-dev linux-headers libtool util-linux file \
+    libidn2-dev libgsasl-dev krb5-dev lapack-dev libexecinfo-dev openblas-dev libbsd-dev
 
+# Pip install numpy for alpine
+RUN set -ex && \
+    pip install --no-cache-dir 'setuptools<60.0.0' & \
+    pip install --upgrade --no-cache-dir wheel nose cython && \
+    wget https://github.com/numpy/numpy/releases/download/v$NUMPY_VERSION/numpy-$NUMPY_VERSION.tar.gz && \
+    tar -zxvf numpy-$NUMPY_VERSION.tar.gz && \
+    cd ./numpy-$NUMPY_VERSION && \
+    [[ $(getconf LONG_BIT) = "32" && -z $(file /bin/busybox | grep -i "arm") ]] && ( \
+    setarch i386 python3 setup.py build config_fc --fcompiler=gnu95 && \
+    find . -type f -exec touch {} + && \
+    setarch i386 python3 setup.py install config_fc --fcompiler=gnu95 ) || \
+    ([[ -z $(file /bin/busybox | grep -i "arm") ]] && \
+    pip install . || ( \
+    python3 setup.py build config_fc --fcompiler=gnu95 && \
+    find . -type f -exec touch {} + && \
+    python3 setup.py install config_fc --fcompiler=gnu95 )) && \
+    cd .. && \
+    rm -rf ./numpy-$NUMPY_VERSION && \
+    rm numpy-$NUMPY_VERSION.tar.gz
+
+# git clone onnxruntime
+RUN set -ex && \
+    git clone --depth 1 --branch $ONNXRUNTIME_TAG --recursive https://github.com/Microsoft/onnxruntime && \
+    rm ./onnxruntime/onnxruntime/test/providers/cpu/nn/string_normalizer_test.cc && \
+    sed "s/    return filters/    filters += \[\'^test_strnorm.*\'\]\n    return filters/" -i ./onnxruntime/onnxruntime/test/python/onnx_backend_test_series.py 
+
+# Pip install onnxruntime
+RUN [[ $(getconf LONG_BIT) = "32" && -z $(file /bin/busybox | grep -i "arm") ]] && ( \
+    setarch i386 ./onnxruntime/build.sh \
+        --config Release \
+        --parallel \
+        --build_wheel \
+        --enable_pybind \
+        --cmake_extra_defines \
+            CMAKE_CXX_FLAGS="-Wno-deprecated-copy -msse -msse2"\
+            onnxruntime_BUILD_UNIT_TESTS=OFF \
+            onnxruntime_OCCLUM=ON \
+        --skip_tests ) || ( \
+    ./onnxruntime/build.sh \
+        --config Release \
+        --parallel \
+        --build_wheel \
+        --enable_pybind \
+        --cmake_extra_defines \
+            CMAKE_CXX_FLAGS="-Wno-deprecated-copy"\
+            onnxruntime_BUILD_UNIT_TESTS=OFF \
+            onnxruntime_OCCLUM=ON \
+        --skip_tests ) && \
+    pip install --no-cache-dir ./onnxruntime/build/Linux/Release/dist/onnxruntime*.whl && \
+    rm -rf ./onnxruntime
+
+# Install openssl ngtcp2 nghttp3
 RUN file /bin/busybox && \
-    [[ $(getconf LONG_BIT) = "32" && -z $(file /bin/busybox | grep "arm") ]] && configtmp="setarch i386 ./config -m32" || configtmp="./config " && \
-    apk add --update --no-cache --virtual curldeps perl && \
+    [[ $(getconf LONG_BIT) = "32" && -z $(file /bin/busybox | grep -i "arm") ]] && configtmp="setarch i386 ./config -m32" || configtmp="./config " && \
     wget https://curl.se/download/curl-$CURL_VERSION.tar.bz2 && \
     git clone --depth 1 -b OpenSSL_1_1_1m+quic https://github.com/quictls/openssl && \
     git clone https://github.com/ngtcp2/nghttp3 && \
@@ -69,31 +121,11 @@ RUN file /bin/busybox && \
     make && \
     make install && \
     cd .. && \
-    rm -rf curl-$CURL_VERSION && \
-    apk del curldeps
+    rm -rf curl-$CURL_VERSION
     
-# Pip install modules
-RUN pip install --upgrade setuptools wheel \
-    && pip install pycurl
-
-# Pip install onnxruntime
-RUN set -ex && \
-    git clone --branch $ONNXRUNTIME_TAG --recursive https://github.com/Microsoft/onnxruntime && \
-    cd ./onnxruntime && \
-    rm ./onnxruntime/test/providers/cpu/nn/string_normalizer_test.cc && \
-    sed "s/    return filters/    filters += \[\'^test_strnorm.*\'\]\n    return filters/" -i ./onnxruntime/test/python/onnx_backend_test_series.py && \
-    ./build.sh \
-        --config Release \
-        --parallel \
-        --build_wheel \
-        --enable_pybind \
-        --cmake_extra_defines \
-            CMAKE_CXX_FLAGS=-Wno-deprecated-copy \
-            onnxruntime_BUILD_UNIT_TESTS=OFF \
-            onnxruntime_OCCLUM=ON \
-        --skip_tests && \
-    pip install ./build/Linux/Release/dist/onnxruntime*.whl && \
-    cd .. && \
-    rm -rf ./onnxruntime && \
+# Pip install pycurl
+RUN pip install --upgrade --no-cache-dir setuptools && \
+    pip install --no-cache-dir --compile pycurl && \
+    apk del build_deps && \
     rm -rf /var/cache/apk/* && \
     rm -rf /usr/share/man/* 
