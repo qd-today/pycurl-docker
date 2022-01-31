@@ -4,7 +4,7 @@ on:
     paths: 
       - 'Dockerfile'
       - '.github/workflows/**'
-    branches: [main]
+    branches: [onnxruntime]
 
 jobs:
   build:
