@@ -16,139 +16,78 @@ RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositorie
     apk add --update --no-cache openrc redis bash git tzdata nano openssh-client ca-certificates\
     file libidn2-dev libgsasl-dev krb5-dev zstd-dev nghttp2-dev zlib-dev brotli-dev \
     python3 py3-numpy-dev py3-pip py3-setuptools py3-wheel py3-opencv py3-pillow && \
-    apk add --update --no-cache --virtual .build_deps cmake make perl autoconf g++ automake \
-    linux-headers libtool util-linux libexecinfo-dev openblas-dev python3-dev && \
     ln -s /usr/bin/python3 /usr/bin/python
 
 # git clone onnxruntime & Pip install onnxruntime
-RUN set -ex && \
-    git clone --depth 1 --branch $ONNXRUNTIME_TAG --recursive https://github.com/Microsoft/onnxruntime && \
+RUN set -ex && \ 
+    apk add --update --no-cache --virtual .build_deps cmake make perl autoconf g++ automake \
+    linux-headers libtool util-linux libexecinfo-dev openblas-dev python3-dev && \
+    git clone --depth 1 --branch $ONNXRUNTIME_TAG https://github.com./Microsoft/onnxruntime && \
+    cd /onnxruntime && \
+    git submodule update --init --recursive && \
+    cd .. && \
     rm ./onnxruntime/onnxruntime/test/providers/cpu/nn/string_normalizer_test.cc && \
-    sed "s/    return filters/    filters += \[\'^test_strnorm.*\'\]\n    return filters/" -i ./onnxruntime/onnxruntime/test/python/onnx_backend_test_series.py && \
-    [[ $(getconf LONG_BIT) = "32" && -z $(file /bin/busybox | grep -i "arm") ]] && ( \
-    setarch i386 ./onnxruntime/build.sh \
-        --config Release \
+    sed "s/    return filters/    filters += \[\'^test_strnorm.*\'\]\n    return filters/" \
+    -i ./onnxruntime/onnxruntime/test/python/onnx_backend_test_series.py && \
+    [[ $(getconf LONG_BIT) = "32" && -z $(file /bin/busybox | grep -i "arm") ]] &&  \
+    { bashtmp='setarch i386 ./onnxruntime/build.sh' && cxxtmp='-msse -msse2'; } ||  \
+    { bashtmp='./onnxruntime/build.sh' && cxxtmp=''; } && \
+    echo $bashtmp && echo $cxxtmp && \
+    $bashtmp --config MinSizeRel  \
         --parallel \
         --build_wheel \
         --enable_pybind \
         --cmake_extra_defines \
-            CMAKE_CXX_FLAGS="-Wno-deprecated-copy -msse -msse2"\
+            CMAKE_CXX_FLAGS="-Wno-deprecated-copy $cxxtmp"\
             onnxruntime_BUILD_UNIT_TESTS=OFF \
-            onnxruntime_OCCLUM=ON \
-        --skip_tests ) || ( \
-    ./onnxruntime/build.sh \
-        --config Release \
-        --parallel \
-        --build_wheel \
-        --enable_pybind \
-        --cmake_extra_defines \
-            CMAKE_CXX_FLAGS="-Wno-deprecated-copy"\
-            onnxruntime_BUILD_UNIT_TESTS=OFF \
-            onnxruntime_OCCLUM=ON \
-        --skip_tests ) && \
+            onnxruntime_BUILD_SHARED_LIB=OFF \
+        --skip_tests && \
     pip install --no-cache-dir ./onnxruntime/build/Linux/Release/dist/onnxruntime*.whl && \
     ln -s $(python -c "from distutils.sysconfig import get_python_lib;print(get_python_lib())")/onnxruntime/capi/libonnxruntime_providers_shared.so /usr/lib && \
-    rm -rf ./onnxruntime
+    rm -rf ./onnxruntime && \
+    apk del .build_deps
 
-# Install openssl ngtcp2 nghttp3 curl & Pip install pycurl
-RUN file /bin/busybox && \
-    [[ $(getconf LONG_BIT) = "32" && -z $(file /bin/busybox | grep -i "arm") ]] && configtmp="setarch i386 ./config -m32" || configtmp="./config " && \
-    wget https://curl.se/download/curl-$CURL_VERSION.tar.bz2 && \
-    git clone --depth 1 -b OpenSSL_1_1_1m+quic https://github.com/quictls/openssl && \
-    git clone https://github.com/ngtcp2/nghttp3 && \
-    git clone https://github.com/ngtcp2/ngtcp2 && \
-    cd openssl && \
-    echo $configtmp enable-tls1_3 --prefix=/usr && \
-    $configtmp enable-tls1_3 --prefix=/usr && \
-    make && \
-    make install_sw && \
-    cd .. && \
-    rm -rf openssl && \
-    cd nghttp3 && \
-    autoreconf -i && \
-    ./configure --prefix=/usr --enable-lib-only && \
-    make && \
-    make install && \
-    cd .. && \
-    rm -rf nghttp3 && \
-    cd ngtcp2 && \
-    autoreconf -i && \
-    ./configure PKG_CONFIG_PATH=/usr/lib/pkgconfig:/usr/lib/pkgconfig LDFLAGS="-Wl,-rpath,/usr/lib" --prefix=/usr --enable-lib-only && \
-    make && \
-    make install && \
-    cd .. && \
-    rm -rf ngtcp2 && \
-    tar xjvf curl-$CURL_VERSION.tar.bz2 && \
-    rm curl-$CURL_VERSION.tar.bz2 && \
-    cd curl-$CURL_VERSION && \
-    autoreconf -fi && \
-    LDFLAGS="-Wl,-rpath,/usr/lib" ./configure \
-        --with-openssl=/usr \
-        --with-nghttp2=/usr \
-        --with-nghttp3=/usr \
-        --with-ngtcp2=/usr \
-        --prefix=/usr \
-        --enable-ipv6 \
-        --enable-unix-sockets \
-        --with-libidn2 \
-        --enable-static \
-        --disable-ldap \
-        --with-pic \
-        --with-gssapi && \
-    make && \
-    make install && \
-    cd .. && \
-    rm -rf curl-$CURL_VERSION && \
-    pip install --no-cache-dir --compile pycurl && \
-    apk del build_deps && \
-    rm -rf /var/cache/apk/* && \
-    rm -rf /usr/share/man/* 
-
-# Pip install numpy for alpine
-# RUN set -ex && \
-    # pip install --no-cache-dir 'setuptools<60.0.0' & \
-    # pip install --upgrade --no-cache-dir wheel nose cython && \
-    # wget https://github.com/numpy/numpy/releases/download/v$NUMPY_VERSION/numpy-$NUMPY_VERSION.tar.gz && \
-    # tar -zxvf numpy-$NUMPY_VERSION.tar.gz && \
-    # cd ./numpy-$NUMPY_VERSION && \
-    # [[ $(getconf LONG_BIT) = "32" && -z $(file /bin/busybox | grep -i "arm") ]] && ( \
-    # setarch i386 python3 setup.py build config_fc --fcompiler=gnu95 && \
-    # find . -type f -exec touch {} + && \
-    # setarch i386 python3 setup.py install config_fc --fcompiler=gnu95 ) || \
-    # ([[ -z $(file /bin/busybox | grep -i "arm") ]] && \
-    # pip install . || ( \
-    # python3 setup.py build config_fc --fcompiler=gnu95 && \
-    # find . -type f -exec touch {} + && \
-    # python3 setup.py install config_fc --fcompiler=gnu95 )) && \
-    # cd .. && \
-    # rm -rf ./numpy-$NUMPY_VERSION && \
-    # rm numpy-$NUMPY_VERSION.tar.gz
-
-# RUN wget https://download.fastgit.org/opencv/opencv/archive/$OPENCV_VERSION/opencv-$OPENCV_VERSION.tar.gz && \
-#     tar -zxvf opencv-$OPENCV_VERSION.tar.gz && \
-#     cd opencv-$OPENCV_VERSION && \
-#     cmake -B build -G Ninja \
-#         -DCMAKE_BUILD_TYPE=Release \
-#         -DCMAKE_INSTALL_PREFIX=/usr \
-#         -DCMAKE_INSTALL_LIBDIR=lib \
-#         -DWITH_TBB=ON \
-#         -DWITH_IPP=OFF \
-#         -DBUILD_DOCS=NO \
-#         -DBUILD_WITH_DEBUG_INFO=ON \
-#         -DBUILD_TESTS=OFF \
-#         -DBUILD_PERF_TESTS=OFF \
-#         -DBUILD_EXAMPLES=OFF \
-#         -DINSTALL_C_EXAMPLES=OFF \
-#         -DINSTALL_PYTHON_EXAMPLES=OFF \
-#         -DOPENCV_SKIP_PYTHON_LOADER=ON \
-#         -DOPENCV_ENABLE_NONFREE=OFF \
-#         -DOPENCV_GENERATE_SETUPVARS=OFF \
-#         -DEIGEN_INCLUDE_PATH=/usr/include/eigen3 \
-#         -DLAPACK_LIBRARIES="/usr/lib/liblapack.so.3;/usr/lib/libblas.so.3;/usr/lib/libcblas.so.3" \
-#         -DCMAKE_SKIP_INSTALL_RPATH=ON \
-#         -DPYTHON_EXECUTABLE=/usr/bin/python3 && \
-#     cmake --build build && \
-#     cmake --install build && \
-#     cd .. && \
-#     rm -rf opencv-$OPENCV_VERSION && \
-#     rm opencv-$OPENCV_VERSION.tar.gz
+    # git clone --depth 1 --branch $ONNXRUNTIME_TAG https://github.com.cnpmjs.org/Microsoft/onnxruntime && \
+    # cd /onnxruntime && \
+    # sed -i "s/https\:\/\/github.com\//https\:\/\/github.com.cnpmjs.org\//g" .gitmodules && \
+    # git submodule sync && \
+    # git submodule update --init && \
+    # cd /onnxruntime/cmake/external/onnx && \
+    # sed -i "s/https\:\/\/github.com\//https\:\/\/github.com.cnpmjs.org\//g" .gitmodules && \
+    # git submodule sync && \
+    # git submodule update --init && \
+    # cd /onnxruntime/cmake/external/onnx-tensorrt && \
+    # sed -i "s/https\:\/\/github.com\//https\:\/\/github.com.cnpmjs.org\//g" .gitmodules && \
+    # git submodule sync && \
+    # git submodule update --init && \
+    # cd /onnxruntime/cmake/external/onnx-tensorrt/third_party/onnx && \
+    # sed -i "s/https\:\/\/github.com\//https\:\/\/github.com.cnpmjs.org\//g" .gitmodules && \
+    # git submodule sync && \
+    # git submodule update --init && \
+    # cd /onnxruntime/cmake/external/protobuf && \
+    # sed -i "s/https\:\/\/github.com\//https\:\/\/github.com.cnpmjs.org\//g" .gitmodules && \
+    # git submodule sync && \
+    # git submodule update --init && \
+    # cd /onnxruntime/cmake/external/tvm && \
+    # sed -i "s/https\:\/\/github.com\//https\:\/\/github.com.cnpmjs.org\//g" .gitmodules && \
+    # git submodule sync && \
+    # git submodule update --init && \
+    # echo "https://mirrors.ustc.edu.cn/alpine/v3.11/main" > /etc/apk/repositories && \
+    # apk add --update --no-cache protobuf-dev=3.11.2-r1 flatbuffers-dev date-dev gtest-dev && \
+    # configtmp='-DCMAKE_BUILD_TYPE=Release -Dprotobuf_WITH_ZLIB=OFF -DCMAKE_TOOLCHAIN_FILE=/onnxruntime/build/tool.cmake \
+    # -Donnxruntime_ENABLE_PYTHON=ON -DPYTHON_EXECUTABLE=/usr/bin/python3 -Donnxruntime_BUILD_SHARED_LIB=OFF \
+    # -Donnxruntime_DEV_MODE=OFF -DONNX_CUSTOM_PROTOC_EXECUTABLE=/usr/bin/protoc \
+    # -Donnxruntime_BUILD_UNIT_TESTS=OFF  -Donnxruntime_PREFER_SYSTEM_LIB=ON' && \
+    # mkdir /onnxruntime/build && \
+    # echo "SET(CMAKE_SYSTEM_NAME Linux)" >> /onnxruntime/build/tool.cmake && \
+    # echo "SET(CMAKE_SYSTEM_VERSION 1)" >> /onnxruntime/build/tool.cmake && \
+    # echo "SET(CMAKE_C_COMPILER gcc)" >> /onnxruntime/build/tool.cmake && \
+    # echo "SET(CMAKE_CXX_COMPILER g++)" >> /onnxruntime/build/tool.cmake && \
+    # echo "SET(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)" >> /onnxruntime/build/tool.cmake && \
+    # echo "SET(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)" >> /onnxruntime/build/tool.cmake && \
+    # echo "SET(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)" >> /onnxruntime/build/tool.cmake && \
+    # echo "SET(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)" >> /onnxruntime/build/tool.cmake && \
+    # echo "SET(CMAKE_FIND_ROOT_PATH /)" >> /onnxruntime/build/tool.cmake && \
+    # echo 'STRING(APPEND CMAKE_CXX_FLAGS " -Wno-deprecated-copy")' >> /onnxruntime/build/tool.cmake && \
+    # cd /onnxruntime/build && cmake ../cmake $configtmp && \
+    # make -j$(($(grep -c ^processor /proc/cpuinfo) - 0)) && python3 setup.py bdist_wheel && cd / )) \
