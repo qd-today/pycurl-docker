@@ -6,9 +6,7 @@ LABEL maintainer "a76yyyy <q981331502@163.com>"
 LABEL org.opencontainers.image.source=https://github.com/qiandao-today/pycurl-docker
 
 # Envirenment for pycurl
-ENV PYCURL_SSL_LIBRARY=openssl
-ENV CURL_VERSION=7.81.0
-ENV ONNXRUNTIME_TAG=v1.10.0
+ENV ONNXRUNTIME_TAG=master
 
 # 换源 & Install packages
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositories && \
@@ -19,34 +17,13 @@ RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositorie
     ln -s /usr/bin/python3 /usr/bin/python
 
 # git clone onnxruntime & Pip install onnxruntime
-RUN set -ex && \ 
-    apk add --update --no-cache --virtual .build_deps cmake make perl autoconf g++ automake \
-    linux-headers libtool util-linux libexecinfo-dev openblas-dev python3-dev && \
+RUN apk add --update --no-cache --virtual .build_deps cmake make perl autoconf g++ automake \
+    linux-headers libtool util-linux libexecinfo-dev openblas-dev python3-dev \
+    protobuf-dev flatbuffers-dev date-dev gtest-dev eigen-dev  && \
     git clone --depth 1 --branch $ONNXRUNTIME_TAG https://github.com./Microsoft/onnxruntime && \
     cd /onnxruntime && \
     git submodule update --init --recursive && \
     cd .. && \
-    rm ./onnxruntime/onnxruntime/test/providers/cpu/nn/string_normalizer_test.cc && \
-    sed "s/    return filters/    filters += \[\'^test_strnorm.*\'\]\n    return filters/" \
-    -i ./onnxruntime/onnxruntime/test/python/onnx_backend_test_series.py && \
-    [[ $(getconf LONG_BIT) = "32" && -z $(file /bin/busybox | grep -i "arm") ]] &&  \
-    { bashtmp='setarch i386 ./onnxruntime/build.sh' && cxxtmp='-msse -msse2'; } ||  \
-    { bashtmp='./onnxruntime/build.sh' && cxxtmp=''; } && \
-    echo $bashtmp && echo $cxxtmp && \
-    $bashtmp --config MinSizeRel  \
-        --parallel \
-        --build_wheel \
-        --enable_pybind \
-        --cmake_extra_defines \
-            CMAKE_CXX_FLAGS="-Wno-deprecated-copy $cxxtmp"\
-            onnxruntime_BUILD_UNIT_TESTS=OFF \
-            onnxruntime_BUILD_SHARED_LIB=OFF \
-        --skip_tests && \
-    pip install --no-cache-dir ./onnxruntime/build/Linux/Release/dist/onnxruntime*.whl && \
-    ln -s $(python -c "from distutils.sysconfig import get_python_lib;print(get_python_lib())")/onnxruntime/capi/libonnxruntime_providers_shared.so /usr/lib && \
-    rm -rf ./onnxruntime && \
-    apk del .build_deps
-
     # git clone --depth 1 --branch $ONNXRUNTIME_TAG https://github.com.cnpmjs.org/Microsoft/onnxruntime && \
     # cd /onnxruntime && \
     # sed -i "s/https\:\/\/github.com\//https\:\/\/github.com.cnpmjs.org\//g" .gitmodules && \
@@ -68,10 +45,40 @@ RUN set -ex && \
     # sed -i "s/https\:\/\/github.com\//https\:\/\/github.com.cnpmjs.org\//g" .gitmodules && \
     # git submodule sync && \
     # git submodule update --init && \
-    # cd /onnxruntime/cmake/external/tvm && \
-    # sed -i "s/https\:\/\/github.com\//https\:\/\/github.com.cnpmjs.org\//g" .gitmodules && \
-    # git submodule sync && \
-    # git submodule update --init && \
+    # # cd /onnxruntime/cmake/external/tvm && \
+    # # sed -i "s/https\:\/\/github.com\//https\:\/\/github.com.cnpmjs.org\//g" .gitmodules && \
+    # # git submodule sync && \
+    # # git submodule update --init && \
+    # sed -i "s/https\:\/\/github.com\//https\:\/\/github.com.cnpmjs.org\//g" /onnxruntime/cmake/external/pybind11.cmake && \
+    # sed -i "s/https\:\/\/github.com\//https\:\/\/github.com.cnpmjs.org\//g" /onnxruntime/cmake/external/abseil-cpp.cmake && \
+    rm /onnxruntime/onnxruntime/test/providers/cpu/nn/string_normalizer_test.cc && \
+    sed "s/    return filters/    filters += \[\'^test_strnorm.*\'\]\n    return filters/" \
+    -i /onnxruntime/onnxruntime/test/python/onnx_backend_test_series.py && \
+    [[ $(getconf LONG_BIT) = "32" && -z $(file /bin/busybox | grep -i "arm") ]] &&  \
+    { bashtmp='setarch i386 /onnxruntime/build.sh' && cxxtmp='-msse -msse2'; } || {\
+    [[ -z $(file /bin/busybox | grep -i "arm") ]] && \
+    { bashtmp='/onnxruntime/build.sh' && cxxtmp=''; } || \
+    { [[ $(getconf LONG_BIT) = "32" ]] && \
+    { bashtmp='setarch arm /onnxruntime/build.sh' && cxxtmp=''; } || \
+    { bashtmp='setarch arm64 /onnxruntime/build.sh' && cxxtmp=''; }; }; } && \
+    echo $bashtmp && echo $cxxtmp && \
+    $bashtmp --config MinSizeRel  \
+        --parallel \
+        --build_wheel \
+        --enable_pybind \
+        --cmake_extra_defines \
+            CMAKE_CXX_FLAGS="-Wno-deprecated-copy -Wno-unused-variable $cxxtmp"\
+            onnxruntime_BUILD_UNIT_TESTS=OFF \
+            onnxruntime_BUILD_SHARED_LIB=OFF \
+            onnxruntime_USE_PREINSTALLED_EIGEN=ON \
+            onnxruntime_PREFER_SYSTEM_LIB=ON \
+            eigen_SOURCE_PATH=/usr/include/eigen3 \
+        --skip_tests && \
+    apk del .build_deps && \
+    pip install --no-cache-dir ./onnxruntime/build/Linux/MinSizeRel/dist/onnxruntime*.whl && \
+    ln -s $(python -c "from distutils.sysconfig import get_python_lib;print(get_python_lib())")/onnxruntime/capi/libonnxruntime_providers_shared.so /usr/lib && \
+    rm -rf ./onnxruntime
+
     # echo "https://mirrors.ustc.edu.cn/alpine/v3.11/main" > /etc/apk/repositories && \
     # apk add --update --no-cache protobuf-dev=3.11.2-r1 flatbuffers-dev date-dev gtest-dev && \
     # configtmp='-DCMAKE_BUILD_TYPE=Release -Dprotobuf_WITH_ZLIB=OFF -DCMAKE_TOOLCHAIN_FILE=/onnxruntime/build/tool.cmake \
