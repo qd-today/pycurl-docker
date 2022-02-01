@@ -19,7 +19,10 @@ RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositorie
 # git clone onnxruntime & Pip install onnxruntime
 RUN apk add --update --no-cache --virtual .build_deps cmake make perl autoconf g++ automake \
     linux-headers libtool util-linux libexecinfo-dev openblas-dev python3-dev \
-    protobuf-dev flatbuffers-dev date-dev gtest-dev eigen-dev  && \
+    protobuf-dev flatbuffers-dev date-dev gtest-dev eigen-dev || \
+    apk add --update --no-cache --virtual .build_deps cmake make perl autoconf g++ automake \
+    linux-headers libtool util-linux libexecinfo-dev openblas-dev python3-dev \
+    protobuf-dev date-dev gtest-dev eigen-dev && \
     git clone --depth 1 --branch $ONNXRUNTIME_TAG https://github.com./Microsoft/onnxruntime && \
     cd /onnxruntime && \
     git submodule update --init --recursive && \
@@ -32,7 +35,7 @@ RUN apk add --update --no-cache --virtual .build_deps cmake make perl autoconf g
     [[ -z $(file /bin/busybox | grep -i "arm") ]] && \
     { bashtmp='/onnxruntime/build.sh' && cxxtmp=''; } || \
     { [[ $(getconf LONG_BIT) = "32" ]] && \
-    { bashtmp='setarch arm /onnxruntime/build.sh' && cxxtmp=''; } || \
+    { bashtmp='/onnxruntime/build.sh --arm' && cxxtmp=''; } || \
     { bashtmp='setarch arm64 /onnxruntime/build.sh' && cxxtmp=''; }; }; } && \
     echo 'add_subdirectory(${PROJECT_SOURCE_DIR}/external/nsync EXCLUDE_FROM_ALL)' >> /onnxruntime/cmake/CMakeLists.txt && \
     echo $bashtmp && echo $cxxtmp && \
@@ -50,10 +53,10 @@ RUN apk add --update --no-cache --virtual .build_deps cmake make perl autoconf g
         --skip_tests && \
     apk del .build_deps && \
     apk add libprotobuf-lite && \
-    pip install --no-cache-dir ./onnxruntime/build/Linux/MinSizeRel/dist/onnxruntime*.whl && \
+    pip install --no-cache-dir /onnxruntime/build/Linux/MinSizeRel/dist/onnxruntime*.whl && \
     ln -s $(python -c 'import warnings;warnings.filterwarnings("ignore");\
     from distutils.sysconfig import get_python_lib;print(get_python_lib())')/onnxruntime/capi/libonnxruntime_providers_shared.so /usr/lib && \
-    rm -rf ./onnxruntime
+    cd / && rm -rf /onnxruntime
 
     # git clone --depth 1 --branch $ONNXRUNTIME_TAG https://github.com.cnpmjs.org/Microsoft/onnxruntime && \
     # cd /onnxruntime && \
