@@ -24,6 +24,37 @@ RUN apk add --update --no-cache --virtual .build_deps cmake make perl autoconf g
     cd /onnxruntime && \
     git submodule update --init --recursive && \
     cd .. && \
+    rm /onnxruntime/onnxruntime/test/providers/cpu/nn/string_normalizer_test.cc && \
+    sed "s/    return filters/    filters += \[\'^test_strnorm.*\'\]\n    return filters/" \
+    -i /onnxruntime/onnxruntime/test/python/onnx_backend_test_series.py && \
+    [[ $(getconf LONG_BIT) = "32" && -z $(file /bin/busybox | grep -i "arm") ]] &&  \
+    { bashtmp='setarch i386 /onnxruntime/build.sh' && cxxtmp='-msse -msse2'; } || {\
+    [[ -z $(file /bin/busybox | grep -i "arm") ]] && \
+    { bashtmp='/onnxruntime/build.sh' && cxxtmp=''; } || \
+    { [[ $(getconf LONG_BIT) = "32" ]] && \
+    { bashtmp='setarch arm /onnxruntime/build.sh' && cxxtmp=''; } || \
+    { bashtmp='setarch arm64 /onnxruntime/build.sh' && cxxtmp=''; }; }; } && \
+    echo 'add_subdirectory(${PROJECT_SOURCE_DIR}/external/nsync EXCLUDE_FROM_ALL)' >> /onnxruntime/cmake/CMakeLists.txt && \
+    echo $bashtmp && echo $cxxtmp && \
+    $bashtmp --config MinSizeRel  \
+        --parallel \
+        --build_wheel \
+        --enable_pybind \
+        --cmake_extra_defines \
+            CMAKE_CXX_FLAGS="-Wno-deprecated-copy -Wno-unused-variable $cxxtmp"\
+            onnxruntime_BUILD_UNIT_TESTS=OFF \
+            onnxruntime_BUILD_SHARED_LIB=OFF \
+            onnxruntime_USE_PREINSTALLED_EIGEN=ON \
+            onnxruntime_PREFER_SYSTEM_LIB=ON \
+            eigen_SOURCE_PATH=/usr/include/eigen3 \
+        --skip_tests && \
+    apk del .build_deps && \
+    apk add libprotobuf-lite && \
+    pip install --no-cache-dir ./onnxruntime/build/Linux/MinSizeRel/dist/onnxruntime*.whl && \
+    ln -s $(python -c 'import warnings;warnings.filterwarnings("ignore");\
+    from distutils.sysconfig import get_python_lib;print(get_python_lib())')/onnxruntime/capi/libonnxruntime_providers_shared.so /usr/lib && \
+    rm -rf ./onnxruntime
+
     # git clone --depth 1 --branch $ONNXRUNTIME_TAG https://github.com.cnpmjs.org/Microsoft/onnxruntime && \
     # cd /onnxruntime && \
     # sed -i "s/https\:\/\/github.com\//https\:\/\/github.com.cnpmjs.org\//g" .gitmodules && \
@@ -51,33 +82,6 @@ RUN apk add --update --no-cache --virtual .build_deps cmake make perl autoconf g
     # # git submodule update --init && \
     # sed -i "s/https\:\/\/github.com\//https\:\/\/github.com.cnpmjs.org\//g" /onnxruntime/cmake/external/pybind11.cmake && \
     # sed -i "s/https\:\/\/github.com\//https\:\/\/github.com.cnpmjs.org\//g" /onnxruntime/cmake/external/abseil-cpp.cmake && \
-    rm /onnxruntime/onnxruntime/test/providers/cpu/nn/string_normalizer_test.cc && \
-    sed "s/    return filters/    filters += \[\'^test_strnorm.*\'\]\n    return filters/" \
-    -i /onnxruntime/onnxruntime/test/python/onnx_backend_test_series.py && \
-    [[ $(getconf LONG_BIT) = "32" && -z $(file /bin/busybox | grep -i "arm") ]] &&  \
-    { bashtmp='setarch i386 /onnxruntime/build.sh' && cxxtmp='-msse -msse2'; } || {\
-    [[ -z $(file /bin/busybox | grep -i "arm") ]] && \
-    { bashtmp='/onnxruntime/build.sh' && cxxtmp=''; } || \
-    { [[ $(getconf LONG_BIT) = "32" ]] && \
-    { bashtmp='setarch arm /onnxruntime/build.sh' && cxxtmp=''; } || \
-    { bashtmp='setarch arm64 /onnxruntime/build.sh' && cxxtmp=''; }; }; } && \
-    echo $bashtmp && echo $cxxtmp && \
-    $bashtmp --config MinSizeRel  \
-        --parallel \
-        --build_wheel \
-        --enable_pybind \
-        --cmake_extra_defines \
-            CMAKE_CXX_FLAGS="-Wno-deprecated-copy -Wno-unused-variable $cxxtmp"\
-            onnxruntime_BUILD_UNIT_TESTS=OFF \
-            onnxruntime_BUILD_SHARED_LIB=OFF \
-            onnxruntime_USE_PREINSTALLED_EIGEN=ON \
-            onnxruntime_PREFER_SYSTEM_LIB=ON \
-            eigen_SOURCE_PATH=/usr/include/eigen3 \
-        --skip_tests && \
-    apk del .build_deps && \
-    pip install --no-cache-dir ./onnxruntime/build/Linux/MinSizeRel/dist/onnxruntime*.whl && \
-    ln -s $(python -c "from distutils.sysconfig import get_python_lib;print(get_python_lib())")/onnxruntime/capi/libonnxruntime_providers_shared.so /usr/lib && \
-    rm -rf ./onnxruntime
 
     # echo "https://mirrors.ustc.edu.cn/alpine/v3.11/main" > /etc/apk/repositories && \
     # apk add --update --no-cache protobuf-dev=3.11.2-r1 flatbuffers-dev date-dev gtest-dev && \
