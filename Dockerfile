@@ -17,12 +17,20 @@ RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositorie
     ln -s /usr/bin/python3 /usr/bin/python
 
 # git clone onnxruntime & Pip install onnxruntime
-RUN apk add --update --no-cache --virtual .build_deps cmake make perl autoconf g++ automake \
+RUN [[ $(getconf LONG_BIT) = "32" && -z $(file /bin/busybox | grep -i "arm") ]] &&  \
+    { bashtmp='setarch i386 /onnxruntime/build.sh' && cxxtmp='-msse -msse2'; } || {\
+    [[ -z $(file /bin/busybox | grep -i "arm") ]] && \
+    { bashtmp='/onnxruntime/build.sh' && cxxtmp=''; } || \
+    { [[ $(getconf LONG_BIT) = "32" ]] && \
+    { bashtmp='' && cxxtmp=''; } || \
+    { bashtmp='setarch arm64 /onnxruntime/build.sh' && cxxtmp='-Wno-psabi'; }; }; } && {\
+    [[ -n "$bashtmp" ]] && { {\
+    apk add --update --no-cache --virtual .build_deps cmake make perl autoconf g++ automake \
     linux-headers libtool util-linux libexecinfo-dev openblas-dev python3-dev \
     protobuf-dev flatbuffers-dev date-dev gtest-dev eigen-dev || \
     apk add --update --no-cache --virtual .build_deps cmake make perl autoconf g++ automake \
     linux-headers libtool util-linux libexecinfo-dev openblas-dev python3-dev \
-    protobuf-dev date-dev gtest-dev eigen-dev && \
+    protobuf-dev date-dev gtest-dev eigen-dev ;} && \
     git clone --depth 1 --branch $ONNXRUNTIME_TAG https://github.com./Microsoft/onnxruntime && \
     cd /onnxruntime && \
     git submodule update --init --recursive && \
@@ -30,33 +38,28 @@ RUN apk add --update --no-cache --virtual .build_deps cmake make perl autoconf g
     rm /onnxruntime/onnxruntime/test/providers/cpu/nn/string_normalizer_test.cc && \
     sed "s/    return filters/    filters += \[\'^test_strnorm.*\'\]\n    return filters/" \
     -i /onnxruntime/onnxruntime/test/python/onnx_backend_test_series.py && \
-    [[ $(getconf LONG_BIT) = "32" && -z $(file /bin/busybox | grep -i "arm") ]] &&  \
-    { bashtmp='setarch i386 /onnxruntime/build.sh' && cxxtmp='-msse -msse2'; } || {\
-    [[ -z $(file /bin/busybox | grep -i "arm") ]] && \
-    { bashtmp='/onnxruntime/build.sh' && cxxtmp=''; } || \
-    { [[ $(getconf LONG_BIT) = "32" ]] && \
-    { bashtmp='/onnxruntime/build.sh --arm' && cxxtmp=''; } || \
-    { bashtmp='setarch arm64 /onnxruntime/build.sh' && cxxtmp=''; }; }; } && \
     echo 'add_subdirectory(${PROJECT_SOURCE_DIR}/external/nsync EXCLUDE_FROM_ALL)' >> /onnxruntime/cmake/CMakeLists.txt && \
     echo $bashtmp && echo $cxxtmp && \
     $bashtmp --config MinSizeRel  \
-        --parallel \
-        --build_wheel \
-        --enable_pybind \
-        --cmake_extra_defines \
-            CMAKE_CXX_FLAGS="-Wno-deprecated-copy -Wno-unused-variable $cxxtmp"\
-            onnxruntime_BUILD_UNIT_TESTS=OFF \
-            onnxruntime_BUILD_SHARED_LIB=OFF \
-            onnxruntime_USE_PREINSTALLED_EIGEN=ON \
-            onnxruntime_PREFER_SYSTEM_LIB=ON \
-            eigen_SOURCE_PATH=/usr/include/eigen3 \
-        --skip_tests && \
+    --parallel \
+    --build_wheel \
+    --enable_pybind \
+    --cmake_extra_defines \
+    CMAKE_CXX_FLAGS="-Wno-deprecated-copy -Wno-unused-variable $cxxtmp"\
+    onnxruntime_BUILD_UNIT_TESTS=OFF \
+    onnxruntime_BUILD_SHARED_LIB=OFF \
+    onnxruntime_USE_PREINSTALLED_EIGEN=ON \
+    onnxruntime_PREFER_SYSTEM_LIB=ON \
+    eigen_SOURCE_PATH=/usr/include/eigen3 \
+    --skip_tests && \
     apk del .build_deps && \
-    apk add libprotobuf-lite && \
+    apk add --update --no-cache libprotobuf-lite && \
     pip install --no-cache-dir /onnxruntime/build/Linux/MinSizeRel/dist/onnxruntime*.whl && \
     ln -s $(python -c 'import warnings;warnings.filterwarnings("ignore");\
     from distutils.sysconfig import get_python_lib;print(get_python_lib())')/onnxruntime/capi/libonnxruntime_providers_shared.so /usr/lib && \
-    cd / && rm -rf /onnxruntime
+    cd / && rm -rf /onnxruntime;} ;} || { \
+    apk add --update --no-cache libprotobuf-lite && \
+    echo "Onnxruntime Builder does not currently support building arm32 wheels";}
 
     # git clone --depth 1 --branch $ONNXRUNTIME_TAG https://github.com.cnpmjs.org/Microsoft/onnxruntime && \
     # cd /onnxruntime && \
@@ -86,14 +89,21 @@ RUN apk add --update --no-cache --virtual .build_deps cmake make perl autoconf g
     # sed -i "s/https\:\/\/github.com\//https\:\/\/github.com.cnpmjs.org\//g" /onnxruntime/cmake/external/pybind11.cmake && \
     # sed -i "s/https\:\/\/github.com\//https\:\/\/github.com.cnpmjs.org\//g" /onnxruntime/cmake/external/abseil-cpp.cmake && \
 
-    # echo "https://mirrors.ustc.edu.cn/alpine/v3.11/main" > /etc/apk/repositories && \
-    # apk add --update --no-cache protobuf-dev=3.11.2-r1 flatbuffers-dev date-dev gtest-dev && \
-    # configtmp='-DCMAKE_BUILD_TYPE=Release -Dprotobuf_WITH_ZLIB=OFF -DCMAKE_TOOLCHAIN_FILE=/onnxruntime/build/tool.cmake \
+    # echo 'add_subdirectory(${PROJECT_SOURCE_DIR}/external/nsync EXCLUDE_FROM_ALL)' >> /onnxruntime/cmake/CMakeLists.txt && \
+    # [[ $(getconf LONG_BIT) = "32" && -z $(file /bin/busybox | grep -i "arm") ]] &&  \
+    # { bashtmp='setarch i386 /onnxruntime/build.sh' && cxxtmp='-msse -msse2'; } || {\
+    # [[ -z $(file /bin/busybox | grep -i "arm") ]] && \
+    # { bashtmp='/onnxruntime/build.sh' && cxxtmp=''; } || \
+    # { [[ $(getconf LONG_BIT) = "32" ]] && \
+    # { bashtmp='' && processortmp=''; } || \
+    # { bashtmp='' && processortmp=''; }; }; } && \
+    # { [[ -z $bashtmp ]] && { \
+    # cmaketmp="-DCMAKE_BUILD_TYPE=MinSizeRel -Dprotobuf_WITH_ZLIB=OFF -DCMAKE_TOOLCHAIN_FILE=/onnxruntime/build/tool.cmake \
     # -Donnxruntime_ENABLE_PYTHON=ON -DPYTHON_EXECUTABLE=/usr/bin/python3 -Donnxruntime_BUILD_SHARED_LIB=OFF \
-    # -Donnxruntime_DEV_MODE=OFF -DONNX_CUSTOM_PROTOC_EXECUTABLE=/usr/bin/protoc \
-    # -Donnxruntime_BUILD_UNIT_TESTS=OFF  -Donnxruntime_PREFER_SYSTEM_LIB=ON' && \
-    # mkdir /onnxruntime/build && \
-    # echo "SET(CMAKE_SYSTEM_NAME Linux)" >> /onnxruntime/build/tool.cmake && \
+    # -Donnxruntime_DEV_MODE=OFF -DONNX_CUSTOM_PROTOC_EXECUTABLE=/usr/bin/protoc -Donnxruntime_BUILD_UNIT_TESTS=OFF \
+    # -Donnxruntime_USE_PREINSTALLED_EIGEN=ON -Donnxruntime_PREFER_SYSTEM_LIB=ON -Deigen_SOURCE_PATH=/usr/include/eigen3" && \
+    # mkdir -p /onnxruntime/build && \
+    # echo "SET(CMAKE_SYSTEM_NAME Linux)" > /onnxruntime/build/tool.cmake && \
     # echo "SET(CMAKE_SYSTEM_VERSION 1)" >> /onnxruntime/build/tool.cmake && \
     # echo "SET(CMAKE_C_COMPILER gcc)" >> /onnxruntime/build/tool.cmake && \
     # echo "SET(CMAKE_CXX_COMPILER g++)" >> /onnxruntime/build/tool.cmake && \
@@ -102,6 +112,8 @@ RUN apk add --update --no-cache --virtual .build_deps cmake make perl autoconf g
     # echo "SET(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)" >> /onnxruntime/build/tool.cmake && \
     # echo "SET(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)" >> /onnxruntime/build/tool.cmake && \
     # echo "SET(CMAKE_FIND_ROOT_PATH /)" >> /onnxruntime/build/tool.cmake && \
-    # echo 'STRING(APPEND CMAKE_CXX_FLAGS " -Wno-deprecated-copy")' >> /onnxruntime/build/tool.cmake && \
-    # cd /onnxruntime/build && cmake ../cmake $configtmp && \
-    # make -j$(($(grep -c ^processor /proc/cpuinfo) - 0)) && python3 setup.py bdist_wheel && cd / )) \
+    # echo 'STRING(APPEND CMAKE_CXX_FLAGS " -Wno-deprecated-copy -Wno-unused-variable -Wno-psabi")' >> /onnxruntime/build/tool.cmake && \
+    # echo $processortmp >> /onnxruntime/build/tool.cmake && \
+    # cd /onnxruntime/build && cmake ../cmake $cmaketmp && \
+    # make -j$(($(grep -c ^processor /proc/cpuinfo) - 0)) && python3 setup.py bdist_wheel && cd / && \
+    # echo ""; } || {\
