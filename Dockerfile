@@ -1,5 +1,5 @@
 # 基础镜像
-FROM ghcr.io/qiandao-today/onnxruntime-docker:latest
+FROM a76yyyy/onnxruntime:latest
 
 # 维护者信息
 LABEL maintainer "a76yyyy <q981331502@163.com>"
