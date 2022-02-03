@@ -13,7 +13,7 @@ ENV CURL_VERSION=master
 RUN apk update && \
     apk add --update --no-cache openrc redis bash git tzdata nano openssh-client ca-certificates\
     file libidn2-dev libgsasl-dev krb5-dev zstd-dev nghttp2-dev zlib-dev brotli-dev \
-    python3 py3-numpy-dev py3-pip py3-setuptools py3-wheel py3-opencv py3-pillow && \
+    python3 py3-numpy-dev py3-pip py3-setuptools py3-wheel py3-opencv py3-pillow python3-dev && \
     apk add --update --no-cache --virtual .build_deps cmake make perl autoconf g++ automake \
     linux-headers libtool util-linux && \
     file /bin/busybox && \
