@@ -8,6 +8,7 @@ LABEL org.opencontainers.image.source=https://github.com/qiandao-today/pycurl-do
 # Envirenment for pycurl
 ENV PYCURL_SSL_LIBRARY=openssl
 ENV CURL_VERSION=master
+ENV DDDDOCR_VERSION=1.4.2
 
 # Install packages & Install openssl ngtcp2 nghttp3 curl & Pip install pycurl
 RUN apk update && \
@@ -63,6 +64,16 @@ RUN apk update && \
     cd .. && \
     rm -rf curl && \
     pip install --no-cache-dir --compile pycurl && \
+    wget https://files.pythonhosted.org/packages/5f/5d/4e6d39b8b0f8ddba32b30174bc4725ad811fa7d810a9e8d0a7512197bbf9/ddddocr-$DDDDOCR_VERSION.tar.gz && \
+    tar -zxvf ddddocr-$DDDDOCR_VERSION.tar.gz  && \
+    rm ddddocr-$DDDDOCR_VERSION.tar.gz && \
+    cd ddddocr-$DDDDOCR_VERSION && \
+    find . -type f -exec touch {} + && \
+    sed -i '/install_package_data/d' setup.py && \
+    sed -i '/install_requires/d' setup.py && \
+    python setup.py install && \
+    cd .. && \
+    rm -rf /ddddocr-$DDDDOCR_VERSION && \
     apk del .build_deps && \
     rm -rf /var/cache/apk/* && \
     rm -rf /usr/share/man/* 

@@ -19,6 +19,7 @@ docker pull a76yyyy/pycurl:latest
 - OPENSSL_VERSION == 1_1_1m+quic
 - PYCURL_VERSION == 7.44.1
 - ONNXRUNTIME_TAG == master
+- DDDDOCR_VERSION == 1.4.2
 
 ```bash
 LDFLAGS="-Wl,-rpath,/usr/lib" ./configure \
