@@ -18,7 +18,7 @@ RUN apk update && \
     linux-headers libtool util-linux && \
     file /bin/busybox && \
     [[ $(getconf LONG_BIT) = "32" && -z $(file /bin/busybox | grep -i "arm") ]] && configtmp="setarch i386 ./config -m32" || configtmp="./config " && \
-    git clone --depth 1 -b $CURL_VERSION https://github.com/quictls/openssl && \
+    git clone --depth 1 -b $CURL_VERSION https://github.com/curl/curl && \
     git clone --depth 1 -b OpenSSL_1_1_1m+quic https://github.com/quictls/openssl && \
     git clone --depth 1 https://github.com/ngtcp2/nghttp3 && \
     git clone --depth 1 https://github.com/ngtcp2/ngtcp2 && \
