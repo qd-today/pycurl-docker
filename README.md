@@ -1,6 +1,6 @@
 # **Pycurl-Docker**
 
-**Python:3.9-Alpine latest with pycurl**
+**Python3.10:Alpine-edge with pycurl**
 
 ## **Repository**
 
@@ -14,11 +14,11 @@ docker pull a76yyyy/pycurl:latest
 
 ## **VERSION**
 
-- PYTHON_VERSION == 3.9
-- CURL_VERSION == 7.81.0
+- PYTHON_VERSION == 3.10
+- CURL_VERSION == master
 - OPENSSL_VERSION == 1_1_1m+quic
 - PYCURL_VERSION == 7.44.1
-- ONNXRUNTIME_TAG == v1.10.0
+- ONNXRUNTIME_TAG == master
 
 ```bash
 LDFLAGS="-Wl,-rpath,/usr/lib" ./configure \
