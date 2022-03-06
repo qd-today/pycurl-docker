@@ -7,25 +7,20 @@ LABEL org.opencontainers.image.source=https://github.com/qiandao-today/pycurl-do
 
 # Envirenment for pycurl
 ENV PYCURL_SSL_LIBRARY=openssl
-ENV CURL_VERSION 7.81.0
-ENV ONNXRUNTIME_TAG v1.10.0
+ENV CURL_VERSION 7.82.0
 
-# 换源 & For nghttp2-dev, we need testing respository.
+# 换源 && Install packages
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositories && \
-    echo https://dl-cdn.alpinelinux.org/alpine/edge/testing >>/etc/apk/repositories 
-
-# Install packages
-RUN apk update && \
-    apk add --update --no-cache openssl openssl-dev openrc redis bash git autoconf g++ tzdata nano openssh-client automake \
-    nghttp2-dev ca-certificates zlib zlib-dev brotli brotli-dev zstd zstd-dev linux-headers libtool \
-    libidn2 libidn2-dev libgsasl libgsasl-dev krb5 krb5-dev cmake make lapack-dev libexecinfo-dev openblas-dev
-
-RUN apk add --update --no-cache --virtual curldeps perl && \
-    wget https://curl.se/download/curl-$CURL_VERSION.tar.bz2 && \
+    apk update && \
+    apk add --update --no-cache openssl-dev bash git tzdata nano openssh-client \
+    nghttp2-dev ca-certificates zlib-dev brotli-dev zstd-dev libidn2-dev libgsasl-dev krb5-dev && \
+    apk add --update --no-cache --virtual curldeps autoconf g++ perl cmake make automake linux-headers libtool && \
+    wget https://curl.haxx.se/download/curl-$CURL_VERSION.tar.bz2 && \
     tar xjvf curl-$CURL_VERSION.tar.bz2 && \
     rm curl-$CURL_VERSION.tar.bz2 && \
     cd curl-$CURL_VERSION && \
-    ./configure \
+    autoreconf -fi && \
+    LDFLAGS="-Wl,-rpath,/usr/lib" ./configure \
         --with-nghttp2=/usr \
         --prefix=/usr \
         --with-ssl \
@@ -36,34 +31,12 @@ RUN apk add --update --no-cache --virtual curldeps perl && \
         --disable-ldap \
         --with-pic \
         --with-gssapi && \
-    make && \
+    make -j$(($(grep -c ^processor /proc/cpuinfo) - 0)) && \
     make install && \
     cd .. && \
-    rm -r curl-$CURL_VERSION && \
-    apk del curldeps
-    
-# Pip install modules
-RUN pip install --upgrade setuptools wheel \
-    && pip install pycurl numpy 
-
-# Pip install onnxruntime
-RUN set -ex && \
-    git clone --branch $ONNXRUNTIME_TAG --recursive https://github.com/Microsoft/onnxruntime && \
-    cd ./onnxruntime && \
-    rm ./onnxruntime/test/providers/cpu/nn/string_normalizer_test.cc && \
-    sed "s/    return filters/    filters += \[\'^test_strnorm.*\'\]\n    return filters/" -i ./onnxruntime/test/python/onnx_backend_test_series.py && \
-    ./build.sh \
-        --config Release \
-        --parallel \
-        --build_wheel \
-        --enable_pybind \
-        --cmake_extra_defines \
-            CMAKE_CXX_FLAGS=-Wno-deprecated-copy \
-            onnxruntime_BUILD_UNIT_TESTS=OFF \
-            onnxruntime_OCCLUM=ON \
-        --skip_tests && \
-    pip install ./build/Linux/Release/dist/onnxruntime*.whl && \
-    cd .. && \
-    rm -rf ./onnxruntime && \
+    rm -r ./curl-$CURL_VERSION && \
+    pip install --upgrade --no-cache-dir pip setuptools wheel \
+    && pip install --no-cache-dir pycurl && \
+    apk del curldeps && \
     rm -rf /var/cache/apk/* && \
     rm -rf /usr/share/man/* 
