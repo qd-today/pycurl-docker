@@ -12,9 +12,8 @@ ENV CURL_VERSION=7.82.0
 # Install packages & Install openssl ngtcp2 nghttp3 curl & Pip install pycurl
 RUN apk update && \
     apk add --update --no-cache bash git tzdata nano openssh-client ca-certificates\
-    file libidn2-dev libgsasl-dev krb5-dev zstd-dev nghttp2-dev zlib-dev brotli-dev \
-    python3 py3-pip py3-setuptools py3-wheel python3-dev && \
-    apk add --update --no-cache --virtual .build_deps cmake make perl autoconf g++ automake linux-headers libtool util-linux && \
+    python3 py3-pip py3-setuptools py3-wheel && \
+    apk add --update --no-cache --virtual .build_deps cmake make perl autoconf g++ automake linux-headers libtool util-linux file libidn2-dev libgsasl-dev krb5-dev zstd-dev nghttp2-dev zlib-dev brotli-dev python3-dev && \
     file /bin/busybox && \
     [[ $(getconf LONG_BIT) = "32" && -z $(file /bin/busybox | grep -i "arm") ]] && configtmp="setarch i386 ./config -m32" || configtmp="./config " && \
     wget https://curl.haxx.se/download/curl-$CURL_VERSION.tar.bz2 && \
@@ -65,5 +64,6 @@ RUN apk update && \
     rm -rf ./curl-$CURL_VERSION && \
     pip install --no-cache-dir --compile pycurl && \
     apk del .build_deps && \
+    apk add --update --no-cache libidn2 libgsasl krb5 zstd-dev nghttp2 zlib brotli && \
     rm -rf /var/cache/apk/* && \
     rm -rf /usr/share/man/* 

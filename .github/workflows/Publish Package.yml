@@ -3,7 +3,7 @@ on:
   push:
     paths: 
       - 'Dockerfile'
-      - '.github/workflows/**'
+      - '.github/workflows/Publish Package.yml'
     branches: [main]
 
 jobs:
