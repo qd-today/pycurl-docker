@@ -7,7 +7,7 @@ LABEL org.opencontainers.image.source=https://github.com/qiandao-today/pycurl-do
 
 # Envirenment for pycurl
 ENV PYCURL_SSL_LIBRARY=openssl
-ENV CURL_VERSION=7.82.0
+ENV CURL_VERSION=7.83.1
 
 # Install packages & Install openssl ngtcp2 nghttp3 curl & Pip install pycurl
 RUN apk update && \
@@ -19,7 +19,7 @@ RUN apk update && \
     wget https://curl.haxx.se/download/curl-$CURL_VERSION.tar.bz2 && \
     tar xjvf curl-$CURL_VERSION.tar.bz2 && \
     rm curl-$CURL_VERSION.tar.bz2 && \
-    git clone --depth 1 -b OpenSSL_1_1_1n+quic https://github.com/quictls/openssl && \
+    git clone --depth 1 -b OpenSSL_1_1_1o+quic https://github.com/quictls/openssl && \
     git clone --depth 1 https://github.com/ngtcp2/nghttp3 && \
     git clone --depth 1 https://github.com/ngtcp2/ngtcp2 && \
     cd openssl && \
