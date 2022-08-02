@@ -15,8 +15,8 @@ docker pull a76yyyy/pycurl:lite-latest
 ## **VERSION**
 
 - PYTHON_VERSION == 3.10
-- CURL_VERSION == 7.83.1
-- OPENSSL_VERSION == 1_1_1o+quic
+- CURL_VERSION == 7.84.0
+- OPENSSL_VERSION == 1_1_1q+quic
 - PYCURL_VERSION == 7.45.1
 
 ```bash
@@ -52,8 +52,8 @@ docker pull a76yyyy/pycurl:latest
 ## **VERSION**
 
 - PYTHON_VERSION == 3.10
-- CURL_VERSION == 7.83.1
-- OPENSSL_VERSION == 1_1_1o+quic
+- CURL_VERSION == 7.84.0
+- OPENSSL_VERSION == 1_1_1q+quic
 - PYCURL_VERSION == 7.45.1
 - ONNXRUNTIME_TAG == v1.11.0
 - DDDDOCR_VERSION == 1.4.3
