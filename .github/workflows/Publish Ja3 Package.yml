@@ -1,8 +1,8 @@
-name: Publish Latest Package
+name: Publish Ja3 Package
 on: 
   push:
     paths: 
-      - 'Dockerfile'
+      - 'Dockerfile.ja3'
       - '.github/workflows/Publish Package.yml'
     branches: [main]
 
