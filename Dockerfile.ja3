@@ -5,7 +5,6 @@ FROM a76yyyy/ddddocr:latest
 LABEL maintainer "a76yyyy <q981331502@163.com>"
 LABEL org.opencontainers.image.source=https://github.com/qiandao-today/pycurl-docker
 
-ARG BROTLI_VERSION=1.0.9
 ARG CURL_VERSION=7.84.0
 
 ENV PYCURL_SSL_LIBRARY=openssl
@@ -13,34 +12,39 @@ ENV PYCURL_SSL_LIBRARY=openssl
 RUN apk update && \
     apk add --update --no-cache bash git tzdata nano openssh-client ca-certificates\
     python3 py3-pip py3-setuptools py3-wheel && \
-    apk add --update --no-cache --virtual .build_deps patch cargo cmake make perl autoconf g++ automake linux-headers libtool util-linux file libidn2-dev libgsasl-dev krb5-dev zstd-dev nghttp2-dev zlib-dev python3-dev c-ares-dev && \
+    apk add --update --no-cache --virtual .build_deps patch cargo cmake make perl autoconf g++ automake linux-headers libtool util-linux file libidn2-dev libgsasl-dev krb5-dev zstd-dev nghttp2-dev zlib-dev python3-dev c-ares-dev go brotli-dev && \
     wget https://curl.haxx.se/download/curl-$CURL_VERSION.tar.bz2 && \
     tar xjf curl-$CURL_VERSION.tar.bz2 && \
     rm curl-$CURL_VERSION.tar.bz2 && \
-    git clone --recursive https://github.com/cloudflare/quiche && \
-    wget https://github.com/google/brotli/archive/refs/tags/v${BROTLI_VERSION}.tar.gz -O brotli-${BROTLI_VERSION}.tar.gz && \
-    tar xf brotli-${BROTLI_VERSION}.tar.gz && \
-    rm brotli-${BROTLI_VERSION}.tar.gz && \
-    cd brotli-${BROTLI_VERSION} && \
-    mkdir build && cd build && \
-    cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=./installed .. && \
-    cmake --build . --config Release --target install && \
-    cd ../../quiche && \
-    cargo build --package quiche --release --features ffi,pkg-config-meta,qlog && \
-    mkdir quiche/deps/boringssl/src/lib && \
-    ln -vnf $(find target/release -name libcrypto.a -o -name libssl.a) quiche/deps/boringssl/src/lib/ && \
-    cd ../curl-$CURL_VERSION && \
+    git clone https://github.com/cloudflare/quiche && \
+    cd /quiche && \
+    git submodule update --init && \
+    cd /quiche/quiche/deps/boringssl && \
+    mkdir build && \
+    cd build && \
+    [[ $(getconf LONG_BIT) = "32" && -z $(file /bin/busybox | grep -i "arm") ]] && configtmp="cmake -DCMAKE_OSX_ARCHITECTURES=i386 -DCMAKE_CXX_FLAGS=-m32 -DCMAKE_CXX_FLAGS=-msse2 -DCMAKE_C_FLAGS=-m32 -DCMAKE_C_FLAGS=-msse2 -DCMAKE_ASM_FLAGS=-m32 -DCMAKE_ASM_FLAGS=-msse2" || configtmp="cmake " && \
+    $configtmp -DCMAKE_BUILD_TYPE=Release -DCMAKE_POSITION_INDEPENDENT_CODE=on .. && \
+    make -j`nproc` && \
+    cd /quiche/quiche && \
+    mkdir deps/boringssl/src/lib && \
+    ln -vnf $(find -name libcrypto.a -o -name libssl.a) deps/boringssl/src/lib/ && \
+    mkdir -p ~/.cargo && \
+    echo -e "[source.crates-io]\nreplace-with = 'ustc'\n[source.ustc]\nregistry = 'https:\/\/mirrors.ustc.edu.cn\/crates.io-index'" > ~/.cargo/config && \
+    # cargo build --release --features pkg-config-meta && \
+    # mv ../target/release/libquiche.so /usr/lib/libquiche.so && \
+    cd /curl-$CURL_VERSION && \
     wget https://cdn.jsdelivr.net/gh/lwthiker/curl-impersonate@main/chrome/patches/curl-impersonate.patch && \
-    wget https://cdn.jsdelivr.net/gh/curl/curl@master/lib/vquic/quiche.c -O lib/vquic/quiche.c && \
-    wget https://cdn.jsdelivr.net/gh/curl/curl@master/lib/vquic/quiche.h -O lib/vquic/quiche.h && \
+    wget https://cdn.jsdelivr.net/gh/curl/curl@master/lib/easy_lock.h -O lib/easy_lock.h && \
+    # wget https://cdn.jsdelivr.net/gh/curl/curl@master/lib/vquic/quiche.c -O lib/vquic/quiche.c && \
+    # wget https://cdn.jsdelivr.net/gh/curl/curl@master/lib/vquic/quiche.h -O lib/vquic/quiche.h && \
     for p in $(ls curl-*.patch); do patch -p1 < $p; done && \
     autoreconf -fi && \
     LDFLAGS="-Wl,-rpath,/usr/lib,-rpath,$PWD/../quiche/target/release" ./configure \
         --with-openssl=$PWD/../quiche/quiche/deps/boringssl/src \
-        --with-quiche=$PWD/../quiche/target/release \
+        # --with-quiche=$PWD/../quiche/target/release \
         --with-nghttp2=/usr \
         --without-ngtcp2 \
-        --with-brotli=$PWD/../brotli-${BROTLI_VERSION}/build/installed \
+        --with-brotli \
         --prefix=/usr \
         --enable-ipv6 \
         --enable-unix-sockets \
@@ -60,7 +64,6 @@ RUN apk update && \
     cd pycurl-ja3 && \
     python3 setup.py install --openssl-dir=$PWD/../quiche/quiche/deps/boringssl/src && \
     cd .. && \
-    mv ./quiche/target/release/libquiche.so /usr/lib/libquiche.so && \
     apk del .build_deps && \
     apk add --update --no-cache libidn2 libgsasl krb5 zstd-dev nghttp2 zlib c-ares && \
     rm -rf ./curl-$CURL_VERSION && \
