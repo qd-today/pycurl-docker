@@ -16,7 +16,7 @@ RUN apk update && \
     wget https://curl.haxx.se/download/curl-$CURL_VERSION.tar.bz2 && \
     tar xjf curl-$CURL_VERSION.tar.bz2 && \
     rm curl-$CURL_VERSION.tar.bz2 && \
-    git clone https://github.com/cloudflare/quiche && \
+    git clone --recursive https://github.com/cloudflare/quiche && \
     cd /quiche && \
     git submodule update --init && \
     cd /quiche/quiche/deps/boringssl && \
@@ -30,7 +30,7 @@ RUN apk update && \
     ln -vnf $(find -name libcrypto.a -o -name libssl.a) deps/boringssl/src/lib/ && \
     mkdir -p ~/.cargo && \
     echo -e "[source.crates-io]\nreplace-with = 'ustc'\n[source.ustc]\nregistry = 'https:\/\/mirrors.ustc.edu.cn\/crates.io-index'" > ~/.cargo/config && \
-    # cargo build --release --features pkg-config-meta && \
+    cargo build --verbose --package quiche --release --features ffi,pkg-config-meta,qlog && \
     # mv ../target/release/libquiche.so /usr/lib/libquiche.so && \
     cd /curl-$CURL_VERSION && \
     wget https://cdn.jsdelivr.net/gh/lwthiker/curl-impersonate@main/chrome/patches/curl-impersonate.patch && \
