@@ -1,6 +1,6 @@
 # **Pycurl-Lite-Docker**
 
-**Python3.10:Alpine-edge only with pycurl**
+**Python3.11:Alpine-edge only with pycurl**
 
 ## **Repository**
 
@@ -37,7 +37,7 @@ LDFLAGS="-Wl,-rpath,/usr/lib" ./configure \
 
 # **Pycurl-Docker**
 
-**Python3.10:Alpine-edge with pycurl ddddocr**
+**Python3.11:Alpine-edge with pycurl ddddocr**
 
 ## **Repository**
 
