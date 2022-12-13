@@ -76,7 +76,7 @@ LDFLAGS="-Wl,-rpath,/usr/lib" ./configure \
 
 # **Pycurl-Docker-default**
 
-Python:3.10-Alpine latest with pycurl - default ( **not support TLS1.3 & Http3 & OnnxRuntime & ddddocr** )
+Python:3.11-Alpine latest with pycurl - default ( **not support TLS1.3 & Http3 & OnnxRuntime & ddddocr** )
 
 ## **Repository**
 
@@ -90,10 +90,10 @@ docker pull a76yyyy/pycurl:default-latest
 
 ## **VERSION**
 
-- PYTHON_VERSION == 3.10
-- CURL_VERSION == 7.82.0
-- OPENSSL_VERSION == 1.1.1
-- PYCURL_VERSION == 7.44.1
+- PYTHON_VERSION == 3.11
+- CURL_VERSION == 7.86.0
+- OPENSSL_VERSION == 3.0.7
+- PYCURL_VERSION == 7.45.1
 
 ```bash
 ./configure \
