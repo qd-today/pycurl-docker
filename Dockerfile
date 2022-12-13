@@ -7,12 +7,12 @@ LABEL org.opencontainers.image.source=https://github.com/qiandao-today/pycurl-do
 
 # Envirenment for pycurl
 ENV PYCURL_SSL_LIBRARY=openssl
-ENV CURL_VERSION 7.82.0
+ENV CURL_VERSION 7.86.0
 
 # 换源 && Install packages
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositories && \
     apk update && \
-    apk add --update --no-cache openssl-dev bash git tzdata nano openssh-client \
+    apk add --update --no-cache openssl-dev bash git tzdata nano openssh-client  \
     nghttp2-dev ca-certificates zlib-dev brotli-dev zstd-dev libidn2-dev libgsasl-dev krb5-dev && \
     apk add --update --no-cache --virtual curldeps autoconf g++ perl cmake make automake linux-headers libtool && \
     wget https://curl.haxx.se/download/curl-$CURL_VERSION.tar.bz2 && \
