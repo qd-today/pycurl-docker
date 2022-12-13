@@ -12,9 +12,8 @@ ENV CURL_VERSION 7.86.0
 # 换源 && Install packages
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositories && \
     apk update && \
-    apk add --update --no-cache openssl-dev bash git tzdata nano openssh-client  \
-    nghttp2-dev ca-certificates zlib-dev brotli-dev zstd-dev libidn2-dev libgsasl-dev krb5-dev && \
-    apk add --update --no-cache --virtual curldeps autoconf g++ perl cmake make automake linux-headers libtool && \
+    apk add --update --no-cache bash git tzdata nano openssh-client ca-certificates && \
+    apk add --update --no-cache --virtual curldeps autoconf g++ perl cmake make automake linux-headers libtool nghttp2-dev zstd-dev zlib-dev brotli-dev libidn2-dev libgsasl-dev krb5-dev openssl-dev && \
     wget https://curl.haxx.se/download/curl-$CURL_VERSION.tar.bz2 && \
     tar xjvf curl-$CURL_VERSION.tar.bz2 && \
     rm curl-$CURL_VERSION.tar.bz2 && \
@@ -38,5 +37,6 @@ RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositorie
     pip install --upgrade --no-cache-dir pip setuptools wheel \
     && pip install --no-cache-dir pycurl && \
     apk del curldeps && \
+    apk add zstd-libs libidn2 libgsasl && \
     rm -rf /var/cache/apk/* && \
     rm -rf /usr/share/man/* 
