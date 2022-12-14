@@ -8,6 +8,7 @@ LABEL org.opencontainers.image.source=https://github.com/qiandao-today/pycurl-do
 ARG CURL_VERSION=7.84.0
 
 ENV PYCURL_SSL_LIBRARY=openssl
+ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
 
 RUN apk update && \
     apk add --update --no-cache bash git tzdata nano openssh-client ca-certificates\
