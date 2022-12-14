@@ -65,6 +65,8 @@ RUN apk update && \
     make install && \
     cd .. && \
     rm -rf ./curl-$CURL_VERSION && \
+    [[ -n $(find /usr/lib64 -name libssl.so.*) ]] && { ln -s /usr/lib64/libssl.so.81.3 /usr/lib/ && \
+    ln -s /usr/lib64/libcrypto.so.81.3 /usr/lib/ ;} || echo "" && \
     pip install --no-cache-dir --compile pycurl && \
     apk del .build_deps && \
     apk add --update --no-cache libidn2 libgsasl krb5 zstd-dev nghttp2 zlib brotli c-ares && \
