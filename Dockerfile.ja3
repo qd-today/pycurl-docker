@@ -11,9 +11,12 @@ ENV PYCURL_SSL_LIBRARY=openssl
 ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
 
 RUN apk update && \
-    apk add --update --no-cache bash git tzdata nano openssh-client ca-certificates\
-    python3 py3-pip py3-setuptools py3-wheel && \
-    apk add --update --no-cache --virtual .build_deps patch cargo cmake make perl autoconf g++ automake linux-headers libtool util-linux file libidn2-dev libgsasl-dev krb5-dev zstd-dev nghttp2-dev zlib-dev python3-dev c-ares-dev go brotli-dev && \
+    apk add --update --no-cache bash git tzdata ca-certificates\
+    python3 py3-six && \
+    apk add --update --no-cache --virtual .build_deps nano openssh-client \
+    patch cargo cmake make perl autoconf g++ automake linux-headers libtool \
+    util-linux file libidn2-dev libgsasl-dev krb5-dev zstd-dev nghttp2-dev zlib-dev \
+    python3-dev c-ares-dev go brotli-dev py3-pip py3-setuptools py3-wheel && \
     wget https://curl.haxx.se/download/curl-$CURL_VERSION.tar.bz2 && \
     tar xjf curl-$CURL_VERSION.tar.bz2 && \
     rm curl-$CURL_VERSION.tar.bz2 && \
@@ -60,18 +63,18 @@ RUN apk update && \
         USE_CURL_SSLKEYLOGFILE=true && \
     make -j$(($(grep -c ^processor /proc/cpuinfo) - 0)) && \
     make install && \
-    cd .. && \
+    cd / && \
     ln -fs /usr/bin/curl-impersonate-chrome /usr/bin/curl && \
     ln -fs /usr/bin/curl-impersonate-chrome-config /usr/bin/curl-config && \
     git clone https://github.com/a76yyyy/pycurl-ja3.git && \
     cd pycurl-ja3 && \
     python3 setup.py install --openssl-dir=$PWD/../quiche/quiche/deps/boringssl/src && \
-    cd .. && \
+    cd / && \
     apk del .build_deps && \
-    apk add --update --no-cache libidn2 libgsasl krb5 zstd-dev nghttp2 zlib c-ares && \
-    rm -rf ./curl-$CURL_VERSION && \
-    rm -rf ./quiche && \
-    rm -rf ./brotli-${BROTLI_VERSION} && \
-    rm -rf ./pycurl-ja3 && \
+    apk add --update --no-cache libidn2 libgsasl zstd-libs zlib c-ares && \
+    rm -rf /curl-$CURL_VERSION && \
+    rm -rf /quiche && \
+    rm -rf ~/.cargo && \
+    rm -rf /pycurl-ja3 && \
     rm -rf /var/cache/apk/* && \
     rm -rf /usr/share/man/*

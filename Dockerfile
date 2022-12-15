@@ -12,9 +12,11 @@ ENV CURL_VERSION=7.86.0
 
 # Install packages & Install openssl ngtcp2 nghttp3 curl & Pip install pycurl
 RUN apk update && \
-    apk add --update --no-cache bash git tzdata nano openssh-client ca-certificates\
-    python3 py3-pip py3-setuptools py3-wheel && \
-    apk add --update --no-cache --virtual .build_deps cmake make perl autoconf g++ automake linux-headers libtool util-linux file libidn2-dev libgsasl-dev krb5-dev zstd-dev nghttp2-dev zlib-dev brotli-dev python3-dev c-ares-dev && \
+    apk add --update --no-cache bash git tzdata ca-certificates python3 py3-six && \
+    apk add --update --no-cache --virtual .build_deps nano openssh-client \
+    cmake make perl autoconf g++ automake linux-headers libtool util-linux file \
+    libidn2-dev libgsasl-dev krb5-dev zstd-dev nghttp2-dev zlib-dev brotli-dev \
+    python3-dev py3-pip py3-setuptools py3-wheel c-ares-dev && \
     file /bin/busybox && \
     [[ $(getconf LONG_BIT) = "64" && -z $(file /bin/busybox | grep -i "arm") ]] && libdir="lib64" || libdir="lib" && \
     [[ $(getconf LONG_BIT) = "32" && -z $(file /bin/busybox | grep -i "arm") ]] && configtmp="setarch i386 ./config -m32" || configtmp="./config " && \
@@ -69,6 +71,6 @@ RUN apk update && \
     ln -s /usr/lib64/libcrypto.so.81.3 /usr/lib/ ;} || echo "" && \
     pip install --no-cache-dir --compile pycurl && \
     apk del .build_deps && \
-    apk add --update --no-cache libidn2 libgsasl krb5 zstd-dev nghttp2 zlib brotli c-ares && \
+    apk add --update --no-cache libidn2 libgsasl zlib c-ares && \
     rm -rf /var/cache/apk/* && \
     rm -rf /usr/share/man/* 
