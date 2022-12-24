@@ -17,7 +17,7 @@ docker pull a76yyyy/pycurl:default-latest
 - PYTHON_VERSION == 3.11
 - CURL_VERSION == 7.86.0
 - OPENSSL_VERSION == 3.0.7-r1
-- PYCURL_VERSION == 7.45.1
+- PYCURL_VERSION == 7.45.2
 
 ```bash
 ./configure \
