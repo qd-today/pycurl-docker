@@ -16,7 +16,7 @@ RUN apk update && \
     apk add --update --no-cache --virtual .build_deps nano openssh-client \
     cmake make perl autoconf g++ automake linux-headers libtool util-linux file \
     libidn2-dev libgsasl-dev krb5-dev zstd-dev nghttp2-dev zlib-dev brotli-dev \
-    python3-dev py3-pip py3-setuptools py3-wheel c-ares-dev nghttp3-dev ngtcp2-dev libpsl-dev && \
+    python3-dev py3-pip py3-setuptools py3-wheel c-ares-dev nghttp3-dev libpsl-dev && \
     file /bin/busybox && \
     [[ $(getconf LONG_BIT) = "64" && -z $(file /bin/busybox | grep -i "arm") ]] && libdir="lib64" || libdir="lib" && \
     [[ $(getconf LONG_BIT) = "32" && -z $(file /bin/busybox | grep -i "arm") ]] && configtmp="setarch i386 ./config -m32" || configtmp="./config " && \
@@ -24,6 +24,7 @@ RUN apk update && \
     tar xjvf curl-$CURL_VERSION.tar.bz2 && \
     rm curl-$CURL_VERSION.tar.bz2 && \
     git clone --depth 1 -b openssl-$SSL_VERSION+quic https://github.com/quictls/openssl && \
+    git clone --depth 1 https://github.com/ngtcp2/ngtcp2 && \
     cd openssl && \
     echo $configtmp enable-tls1_3 --prefix=/usr && \
     $configtmp enable-tls1_3 --prefix=/usr && \
@@ -31,6 +32,13 @@ RUN apk update && \
     make install_sw && \
     cd .. && \
     rm -rf openssl && \
+    cd ngtcp2 && \
+    autoreconf -fi && \
+    ./configure PKG_CONFIG_PATH=/usr/$libdir/pkgconfig LDFLAGS="-Wl,-rpath,/usr/$libdir" --prefix=/usr --enable-lib-only && \
+    make -j$(($(grep -c ^processor /proc/cpuinfo) - 0)) check && \
+    make install && \
+    cd .. && \
+    rm -rf ngtcp2 && \
     cd curl-$CURL_VERSION && \
     autoreconf -fi && \
     LDFLAGS="-Wl,-rpath,/usr/$libdir" ./configure \
@@ -55,6 +63,6 @@ RUN apk update && \
     ln -s /usr/lib64/libcrypto.so.81.3 /usr/lib/ ;} || echo "" && \
     pip install --no-cache-dir --compile --break-system-packages pycurl && \
     apk del .build_deps && \
-    apk add --update --no-cache libidn2 libgsasl zlib c-ares nghttp2 nghttp3 ngtcp2 libpsl && \
+    apk add --update --no-cache libidn2 libgsasl zlib c-ares nghttp2 nghttp3 libpsl && \
     rm -rf /var/cache/apk/* && \
     rm -rf /usr/share/man/*
