@@ -33,6 +33,7 @@ RUN apk update && \
     cd .. && \
     rm -rf openssl && \
     cd ngtcp2 && \
+    git submodule update --init && \
     autoreconf -fi && \
     ./configure PKG_CONFIG_PATH=/usr/$libdir/pkgconfig LDFLAGS="-Wl,-rpath,/usr/$libdir" --prefix=/usr --enable-lib-only && \
     make -j$(($(grep -c ^processor /proc/cpuinfo) - 0)) check && \
