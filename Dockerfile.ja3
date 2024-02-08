@@ -5,7 +5,7 @@ FROM a76yyyy/ddddocr:latest
 LABEL maintainer "a76yyyy <q981331502@163.com>"
 LABEL org.opencontainers.image.source=https://github.com/qiandao-today/pycurl-docker
 
-ARG CURL_VERSION=8.6.0
+ARG CURL_VERSION=8.1.1
 
 ENV PYCURL_SSL_LIBRARY=openssl
 ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
