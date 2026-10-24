@@ -54,8 +54,10 @@ jobs:
         with:
           context: .
           file: ./Dockerfile.ja3
-          # dispatch 可指定平台子集做快速验证；留空与 tag 发布时均为默认五平台
-          platforms: ${{ github.event.inputs.platforms || 'linux/386,linux/arm64,linux/amd64,linux/arm/v6,linux/arm/v7' }}
+          # dispatch 可指定平台子集做快速验证；留空与 tag 发布时均为默认七平台
+          # （五平台 + ppc64le/riscv64；s390x/loong64 排除——BoringSSL 无 s390x 移植，
+          #  loong64 需拆独立 job + imagetools 合并且最慢，暂缓）
+          platforms: ${{ github.event.inputs.platforms || 'linux/386,linux/arm64,linux/amd64,linux/arm/v6,linux/arm/v7,linux/ppc64le,linux/riscv64' }}
           # tag 推送 = 发布；dispatch 按 push 输入决定（默认 false = 仅验证构建）
           push: ${{ github.event.inputs.push == 'true' || startsWith(github.ref, 'refs/tags/') }}
           tags: ${{ steps.meta.outputs.tags }}

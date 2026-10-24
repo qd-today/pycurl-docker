@@ -54,8 +54,9 @@ jobs:
         with:
           context: .
           file: ./Dockerfile.lite
-          # dispatch 可指定平台子集做快速验证；留空与 tag 发布时均为默认五平台
-          platforms: ${{ github.event.inputs.platforms || 'linux/386,linux/arm64,linux/amd64,linux/arm/v6,linux/arm/v7' }}
+          # dispatch 可指定平台子集做快速验证；留空与 tag 发布时均为默认八平台
+          # （alpine:3.24 官方镜像覆盖全部八个；loong64 官方无此变体，未纳入）
+          platforms: ${{ github.event.inputs.platforms || 'linux/386,linux/arm64,linux/amd64,linux/arm/v6,linux/arm/v7,linux/ppc64le,linux/riscv64,linux/s390x' }}
           # tag 推送 = 发布；dispatch 按 push 输入决定（默认 false = 仅验证构建）
           push: ${{ github.event.inputs.push == 'true' || startsWith(github.ref, 'refs/tags/') }}
           tags: ${{ steps.meta.outputs.tags }}
