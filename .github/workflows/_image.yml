@@ -1,0 +1,335 @@
+name: _Image (reusable)
+
+# 三个变体（main / ja3 / lite）共用的构建-冒烟-发布流水线。
+# 变体差异全部由 inputs 表达，避免三份 workflow 各抄一遍逻辑后逐渐漂移
+# （此前就是三份独立 workflow：同一批 QEMU/dispatch/冒烟改动要改三次）。
+#
+# 阶段划分（与 ddddocr 保持一致的三段解耦）：
+#   1) build  ：按架构组并行构建，ARM64 走 GitHub 原生 arm64 runner；
+#               发布模式按 digest 推到 Docker Hub（push-by-digest，不产任何中间 tag）
+#   2) smoke  ：从 build 写下的层缓存重建单平台镜像（命中缓存 = 秒级），逐平台真跑
+#   3) publish：全部构建 + 全部冒烟通过后，用 imagetools 把各 digest 合并成正式 tag，
+#               并断言 manifest 平台集合与计划一致
+on:
+  workflow_call:
+    inputs:
+      variant:
+        description: '变体标识，仅用于缓存 scope 与日志命名'
+        type: string
+        required: true
+      dockerfile:
+        description: '该变体的 Dockerfile'
+        type: string
+        required: true
+      latest_tag:
+        description: '滚动 tag，如 latest / ja3-latest / lite-latest'
+        type: string
+        required: true
+      version_prefix:
+        description: '版本 tag 前缀，main 为空串，ja3/lite 为 ja3- / lite-'
+        type: string
+        required: true
+      smoke_role:
+        description: '冒烟脚本的角色参数：main / ja3 / lite'
+        type: string
+        required: true
+      default_platforms:
+        description: '该变体的默认平台集合（逗号分隔）'
+        type: string
+        required: true
+      platforms:
+        description: '平台子集（空 = 用 default_platforms）'
+        type: string
+        default: ''
+      push:
+        description: '构建并冒烟通过后是否发布'
+        type: boolean
+        default: false
+      native_arm:
+        description: '是否用原生 arm64 runner 构建 arm64'
+        type: boolean
+        default: true
+    secrets:
+      DOCKER_USERNAME:
+        required: false
+      DOCKER_PASSWORD:
+        required: false
+
+env:
+  PUBLISH: ${{ inputs.push || startsWith(github.ref, 'refs/tags/') }}
+  IMAGE: docker.io/a76yyyy/pycurl
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    name: Plan
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      smoke_matrix: ${{ steps.plan.outputs.smoke_matrix }}
+      expected: ${{ steps.plan.outputs.expected }}
+      full: ${{ steps.plan.outputs.full }}
+    steps:
+      - name: Compute matrices
+        id: plan
+        env:
+          PLATFORM_INPUT: ${{ inputs.platforms }}
+          DEFAULT_PLATFORMS: ${{ inputs.default_platforms }}
+          NATIVE_ARM: ${{ inputs.native_arm && 'true' || 'false' }}
+          VARIANT: ${{ inputs.variant }}
+        run: |
+          python3 - <<'PY' > /tmp/plan.out
+          import json, os, sys
+
+          default = [p.strip() for p in os.environ["DEFAULT_PLATFORMS"].split(",") if p.strip()]
+          raw = (os.environ.get("PLATFORM_INPUT") or "").strip()
+          plats = [p.strip() for p in raw.split(",") if p.strip()] if raw else default
+
+          allowed = {"linux/amd64", "linux/386", "linux/arm64", "linux/arm/v7",
+                     "linux/arm/v6", "linux/ppc64le", "linux/riscv64", "linux/s390x"}
+          bad = [p for p in plats if p not in allowed]
+          if bad:
+              sys.exit("::error::未知平台: %s（可选: %s）" % (",".join(bad), ",".join(sorted(allowed))))
+
+          native = (os.environ.get("NATIVE_ARM") != "false")
+          arm_runner = "ubuntu-24.04-arm" if native else "ubuntu-latest"
+          variant = os.environ["VARIANT"]
+
+          # 按「是否本机原生 + 编译量级」分组；组间完全并行，互不抢 CPU
+          GROUPS = [
+              ("x86",     "ubuntu-latest", ["linux/amd64", "linux/386"]),
+              ("arm",     arm_runner,      ["linux/arm64", "linux/arm/v7", "linux/arm/v6"]),
+              ("ppc64le", "ubuntu-latest", ["linux/ppc64le", "linux/s390x"]),
+              ("riscv64", "ubuntu-latest", ["linux/riscv64"]),
+          ]
+          include = []
+          for name, runner, group_plats in GROUPS:
+              sel = [p for p in group_plats if p in plats]
+              if sel:
+                  include.append({"group": name, "runner": runner, "platforms": ",".join(sel)})
+          if not include:
+              sys.exit("::error::没有可构建的平台")
+
+          # 该平台上的基座 ddddocr 是否带完整 OCR 栈（决定冒烟期望 ocr / nocr）
+          OCR_STACK = {"linux/amd64", "linux/arm64", "linux/arm/v7",
+                       "linux/ppc64le", "linux/riscv64"}
+          GROUP_OF = {
+              "linux/amd64": "x86", "linux/386": "x86",
+              "linux/arm64": "arm", "linux/arm/v7": "arm", "linux/arm/v6": "arm",
+              "linux/ppc64le": "ppc64le", "linux/s390x": "ppc64le",
+              "linux/riscv64": "riscv64",
+          }
+          smoke = []
+          for p in plats:
+              smoke.append({
+                  "platform": p,
+                  "group": GROUP_OF[p],
+                  "ocr": "ocr" if (p in OCR_STACK and variant != "lite") else "nocr",
+                  "runner": arm_runner if p == "linux/arm64" else "ubuntu-latest",
+              })
+
+          print("matrix=" + json.dumps({"include": include}))
+          print("smoke_matrix=" + json.dumps({"include": smoke}))
+          print("expected=" + ",".join(sorted(plats)))
+          print("full=%s" % str(sorted(plats) == sorted(default)).lower())
+          PY
+          echo "--- 构建分组 ---"
+          sed -n 's/^matrix=//p' /tmp/plan.out | python3 -m json.tool
+          echo "--- 冒烟矩阵 ---"
+          sed -n 's/^smoke_matrix=//p' /tmp/plan.out | python3 -m json.tool
+          echo "--- 其余 ---"
+          grep -Ev '^(matrix|smoke_matrix)=' /tmp/plan.out
+          cat /tmp/plan.out >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: plan
+    name: Build ${{ matrix.group }} (${{ matrix.platforms }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 300
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up QEMU
+        # 组内跨架构平台（arm 组的 armv7/armv6、x86 组的 386 等）需要 binfmt；
+        # 本机架构不走 QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Login to Docker Hub
+        id: login-dockerhub
+        if: env.PUBLISH == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Build
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./${{ inputs.dockerfile }}
+          platforms: ${{ matrix.platforms }}
+          # 发布模式按 digest 推送：不产生任何中间 tag（Docker Hub 没有删 tag 的 API，
+          # 用 staging tag 会永久污染 tag 列表），由 publish 阶段合并成正式多架构 tag
+          push: ${{ env.PUBLISH == 'true' }}
+          outputs: ${{ env.PUBLISH == 'true' && format('type=image,name={0},push-by-digest=true,name-canonical=true', 'docker.io/a76yyyy/pycurl') || '' }}
+          # 保持与旧版行为一致：不产出 attestation 清单（旧 Docker 客户端兼容性）
+          provenance: false
+          cache-from: type=gha,scope=pycurl-${{ inputs.variant }}-${{ matrix.group }}
+          cache-to: type=gha,mode=max,scope=pycurl-${{ inputs.variant }}-${{ matrix.group }},ignore-error=true
+      - name: Export digest
+        if: env.PUBLISH == 'true'
+        run: |
+          set -eu
+          mkdir -p /tmp/digests
+          echo "${{ steps.build.outputs.digest }}" > "/tmp/digests/${{ matrix.group }}.digest"
+          echo "digest: $(cat "/tmp/digests/${{ matrix.group }}.digest")"
+      - name: Upload digest
+        if: env.PUBLISH == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ inputs.variant }}-${{ matrix.group }}
+          path: /tmp/digests/*.digest
+          retention-days: 1
+          if-no-files-found: error
+
+  # 每个平台一个 job：从构建缓存重建单平台镜像（命中缓存 = 秒级），在该架构上真跑。
+  # 与构建解耦后，构建失败与运行时失败是两种独立信号，产物也能单独构建用于调试
+  smoke:
+    needs: [plan, build]
+    name: Smoke ${{ matrix.platform }} (${{ matrix.ocr }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    if: ${{ needs.build.result == 'success' }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.smoke_matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Materialize image from cache (${{ matrix.platform }})
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./${{ inputs.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          load: true
+          push: false
+          tags: pycurl-smoke:test
+          provenance: false
+          # build-args 必须与 build 阶段一致，否则缓存不命中会退化成全量重编译
+          cache-from: type=gha,scope=pycurl-${{ inputs.variant }}-${{ matrix.group }}
+      # 脚本经 stdin 喂进容器（python3 -），不进镜像、不加层、不依赖 bind mount
+      - name: Run smoke (${{ inputs.smoke_role }}/${{ matrix.ocr }})
+        run: |
+          docker run --rm -i --platform ${{ matrix.platform }} pycurl-smoke:test \
+            python3 - ${{ inputs.smoke_role }} ${{ matrix.ocr }} < tests/smoke.py
+
+  publish:
+    needs: [plan, build, smoke]
+    name: Merge digests and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # 闸门：① 有发布意图 ② 无任何失败（冒烟失败 = 不发布）③ 平台集合完整
+    if: ${{ (inputs.push || startsWith(github.ref, 'refs/tags/')) && !cancelled() && !contains(needs.*.result, 'failure') }}
+    permissions:
+      contents: read
+    steps:
+      - name: Guard - reject partial publish
+        if: ${{ needs.plan.outputs.full != 'true' }}
+        run: |
+          echo "::error::平台子集（${{ needs.plan.outputs.expected }}）不是该变体的完整平台集合，禁止发布。"
+          echo "::error::用子集发布会把多平台正式 manifest 覆盖成不完整版本。"
+          echo "::error::要发布请留空 platforms 走全平台构建。"
+          exit 1
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          pattern: digests-${{ inputs.variant }}-*
+          path: /tmp/digests
+          merge-multiple: true
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Create multi-arch manifests
+        env:
+          LATEST_TAG: ${{ inputs.latest_tag }}
+          VERSION_PREFIX: ${{ inputs.version_prefix }}
+        run: |
+          set -euo pipefail
+          SRCS=""
+          for f in /tmp/digests/*.digest; do
+            SRCS="$SRCS docker.io/a76yyyy/pycurl@$(cat "$f")"
+          done
+          echo "聚合来源:${SRCS}"
+
+          TAGS="${LATEST_TAG}"
+          # 版本 tag 只在 tag 事件产出；dispatch 时 ref_name 是分支名，推出去会污染 Hub
+          if [ "${{ startsWith(github.ref, 'refs/tags/') }}" = "true" ]; then
+            TAGS="$TAGS ${VERSION_PREFIX}${{ github.ref_name }}"
+          fi
+          for TAG in $TAGS; do
+            echo "::group::合并 -> a76yyyy/pycurl:${TAG}"
+            docker buildx imagetools create -t "docker.io/a76yyyy/pycurl:${TAG}" $SRCS
+            echo "::endgroup::"
+          done
+          echo "TAGS=$TAGS" >> "$GITHUB_ENV"
+      - name: Verify manifest platform completeness
+        env:
+          EXPECTED: ${{ needs.plan.outputs.expected }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, subprocess, sys
+
+          expected = {p.strip() for p in os.environ["EXPECTED"].split(",") if p.strip()}
+
+          def platforms(tag):
+              try:
+                  raw = subprocess.run(
+                      ["docker", "buildx", "imagetools", "inspect", "--raw", tag],
+                      capture_output=True, text=True, check=True).stdout
+              except subprocess.CalledProcessError as e:
+                  raise SystemExit("::error::无法读取 %s 的 manifest: %s"
+                                   % (tag, (e.stderr or "").strip()[:300]))
+              idx = json.loads(raw)
+              out = set()
+              for m in idx.get("manifests", []):
+                  p = m.get("platform") or {}
+                  arch = p.get("architecture")
+                  if not arch or arch == "unknown":
+                      continue
+                  variant = p.get("variant")
+                  out.add("%s/%s%s" % (p.get("os", "linux"), arch, "/" + variant if variant else ""))
+              return out
+
+          failed = False
+          for tag in os.environ["TAGS"].split():
+              full = "docker.io/a76yyyy/pycurl:" + tag
+              got = platforms(full)
+              if got == expected:
+                  print("OK   %s -> %d 平台" % (tag, len(got)))
+                  continue
+              failed = True
+              print("FAIL %s" % full)
+              print("     缺失: %s" % (sorted(expected - got) or "无"))
+              print("     多余: %s" % (sorted(got - expected) or "无"))
+          if failed:
+              sys.exit("::error::manifest 平台完整性校验失败")
+          PY

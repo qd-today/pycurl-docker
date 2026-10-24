@@ -147,6 +147,53 @@ docker buildx build --platform linux/ppc64le \
 
 > curl-impersonate 源码与 pycurl sdist 仍从 GitHub / PyPI 直连拉取，镜像源参数不影响这两步。
 
+## **CI 架构（三变体共用一条流水线）**
+
+三个变体是同一套 `.github/workflows/_image.yml`（`workflow_call`）的三个薄调用方，
+变体差异全部通过参数传入，不再各维护一份 workflow：
+
+```
+plan  -> build（架构组并行）-> smoke（每平台一个 job）-> publish（合并 digest）
+```
+
+- **build**：按 `x86 / arm / ppc64le / riscv64` 分组并行，arm64 走 GitHub 原生
+  `ubuntu-24.04-arm`（比 QEMU 快 3-5 倍）；发布模式按 `push-by-digest` 推到 Docker Hub，
+  **不产生任何中间 tag**（Docker Hub 没有删 tag 的 API，用 staging tag 会永久污染 tag 列表）
+- **smoke**：每个平台一个 job，从构建阶段的层缓存重建单平台镜像（命中缓存 = 秒级，
+  不重新编译）后在该架构上真跑 `tests/smoke.py`
+- **publish**：`needs` 全部 build + 全部 smoke，任何构建或冒烟失败都不会产生 tag；
+  发布后用 `imagetools inspect` 断言每个正式 tag 的平台集合与计划完全一致
+
+`build` 与 `smoke` 之间靠 GHA 层缓存（scope = `pycurl-<变体>-<架构组>`）传递产物，
+因此「同 commit 先验证、再发布」不会重复编译：验证跑过之后发布时只剩导出时间。
+
+**`tests/smoke.py` 一个文件覆盖三个变体**，角色与 OCR 期望显式传参：
+
+```bash
+docker run --rm -i --platform <platform> <image> \
+  python3 - <main|ja3|lite> <ocr|nocr> < tests/smoke.py
+```
+
+| 检查项 | main | ja3 | lite |
+|---|---|---|---|
+| pycurl 可导入 + libcurl 带 HTTP3（features 位） | ✓ | ✓ | ✓ |
+| 真实 HTTPS 请求（generate_204） | ✓ | ✓ | ✓ |
+| OCR 栈真实推理 / 断言确实没有 | ✓ / — | ✓ / — | — / ✓ |
+| `pycurl.IMPERSONATE == 10999` | — | ✓ | — |
+| **本地抓 ClientHello 自算 ja3n + UA + 请求头数** | — | ✓ | — |
+
+> ja3 的指纹检查**不访问任何第三方指纹站**：本地起一个 TCP 监听，直接从 socket 读
+> ClientHello 原始字节，用纯标准库解析 cipher / extension / curve / point_format 后自算
+> ja3 与 ja3n（GREASE 过滤 + 扩展排序归一化）。期望值
+> `bd4930bd9b000ee684830e44bab76fdf` 经双向验证：既等于 browserleaks 对 chrome152 的
+> 返回，也等于本实现的离线计算结果；裸 libcurl 为 `4fd7cab6...`，证明指纹确实被
+> impersonate 改写。脚本还要求必须用**主机名**连接——用 IP 时客户端不发 SNI 扩展，
+> 扩展列表与真实浏览器不同，算出的指纹自然对不上。
+
+**workflow_dispatch 输入**：`push`（默认 false = 只构建+冒烟验证）、`platforms`
+（子集加速验证，**子集构建禁止发布**，防止不完整 manifest 覆盖正式 tag）、
+`native_arm`（默认 true，runner 不可用时取消勾选回退 QEMU）。
+
 # **Pycurl-Lite-Docker**
 
 **Python3.14:Alpine 3.24 only with pycurl（不含 ddddocr/onnxruntime）**
@@ -201,3 +248,9 @@ Python:Alpine latest with pycurl - default ( **not support TLS1.3 & Http3 & Onnx
 ```bash
 docker pull a76yyyy/pycurl:default-latest
 ```
+
+> ⚠️ **已废弃（deprecated）**：`default` 变体最后一次构建是 2022-12（curl 7.86.0，
+> 在 `pycurl-docker-default` 仓库归档前产出），分支和 Docker Hub 上的 `default-*`
+> tag 都还在，但**不再随主仓库演进，也不在 CI 覆盖范围内**。
+> 现在需要「轻量、不含 OCR」时请用 **lite 变体**（`lite-latest`，Alpine 3.24 + curl 8.23.0
+> + HTTP3，与主变体共用同一条 CI 流水线）。

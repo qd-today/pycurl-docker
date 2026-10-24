@@ -6,98 +6,30 @@ on:
   workflow_dispatch:
     inputs:
       push:
-        description: '构建完成后推送到 Docker Hub（不勾选则仅完整构建验证，不发布任何镜像）'
+        description: '构建并通过冒烟测试后推送到 Docker Hub（不勾选则只构建+冒烟验证，不发布任何镜像）'
         type: boolean
         default: false
       platforms:
-        description: '要构建的平台列表，逗号分隔不要空格，如 linux/arm64,linux/amd64；留空=默认六平台'
+        description: '要构建的平台列表，逗号分隔不要空格，如 linux/amd64,linux/arm64；留空=该变体默认平台。子集构建禁止发布'
         type: string
         default: ''
+      native_arm:
+        description: '用 GitHub 原生 arm64 runner 构建 arm64（比 QEMU 快 3-5 倍）；该 runner 不可用时取消勾选回退 QEMU'
+        type: boolean
+        default: true
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    name: Build image job
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      # 五平台含 386/arm/v6/arm/v7，runner 仅 amd64 本机，必须注册 QEMU 二进制翻译，
-      # 否则非本机平台的 RUN 步骤直接 exec format error
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      # 纯验证构建（dispatch 不勾 push）时登录失败不应阻塞构建，故 continue-on-error；
-      # 登录失败时 metadata 的 enable 条件为假、不产出 tag，build-push-action 只构建不推送
-      # id 是必需的：下方 metadata 用 steps.login-dockerhub.outcome 判定是否启用镜像名，
-      # 缺 id 会求值成空 -> 镜像名被禁用 -> tag 列表为空 -> tag 发布时报 "tag is needed"
-      - name: Login to Docker Hub
-        id: login-dockerhub
-        uses: docker/login-action@v3
-        continue-on-error: true
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-      - name: Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: a76yyyy/pycurl,enable=${{ steps.login-dockerhub.outcome == 'success' }}
-          # 关闭 semver 等模式的自动 latest，只保留下面显式声明的标签，
-          # 避免自动 latest 覆盖版本标签（参见 ddddocr 项目的教训）
-          flavor: |
-            latest=false
-          tags: |
-            type=raw,value=ja3-latest
-            # 版本 tag 只在 tag 事件产出；dispatch 时 ref_name 是分支名，推出去会污染 Hub
-            type=raw,value=ja3-${{ github.ref_name }},enable=${{ startsWith(github.ref, 'refs/tags/') }}
-      - name: Build and publish image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile.ja3
-          # dispatch 可指定平台子集做快速验证；留空与 tag 发布时均为默认六平台。
-          #
-          # 平台天花板由 BoringSSL 决定（include/openssl/target.h 的官方清单：
-          # x86 / x86_64 / aarch64 / arm / mips64 / riscv64 / pnacl / wasm / asmjs / myriad2）：
-          #   - ppc64le：不在清单内。虽是小端、理论可跑，但需要给加密库打 target.h 补丁
-          #     + 关掉 GCC 15 的 -Werror=unused-function，每次升级 curl-impersonate 都要重新核对，
-          #     且上游零覆盖 —— 维护成本高于收益，故不纳入默认发布（需要时用 dispatch 指定
-          #     platforms=linux/ppc64le 手工构建，不承诺可用）。
-          #   - s390x：大端，target.h 明确写 "Functions will not produce the correct answer"，
-          #     物理上不可用，永不纳入。
-          #   - loong64：无 loongarch 条目，且基座需拆独立 job + imagetools 合并，暂缓。
-          # 这三个平台的功能由主变体/lite 兜底（OpenSSL，已验证 8 平台），qd 在此类平台上
-          # 可正常签到，只是不具备 TLS 指纹伪装能力。
-          platforms: ${{ github.event.inputs.platforms || 'linux/386,linux/arm64,linux/amd64,linux/arm/v6,linux/arm/v7,linux/riscv64' }}
-          # tag 推送 = 发布；dispatch 按 push 输入决定（默认 false = 仅验证构建）
-          push: ${{ github.event.inputs.push == 'true' || startsWith(github.ref, 'refs/tags/') }}
-          tags: ${{ steps.meta.outputs.tags }}
-          # 不产出 attestation 清单，保持与旧版行为一致（旧 Docker 客户端兼容性）
-          provenance: false
-  # 冒烟测试 job：与 build 并行（不 needs），单平台 amd64 --load 到本地 docker 后运行
-  # tests/ 脚本。两者独立信号——构建失败与运行时失败分别可见，互不遮蔽
-  smoke-test:
-    runs-on: ubuntu-latest
-    name: Smoke test job (linux/amd64)
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Build test image (linux/amd64, load to local docker)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile.ja3
-          platforms: linux/amd64
-          load: true
-          push: false
-          tags: pycurl-smoke:test
-          provenance: false
-      # 脚本经 stdin 喂给容器（sh -s），无需 bind mount，任何环境可用
-      - name: Run smoke tests
-        run: docker run --rm -i pycurl-smoke:test sh -s < tests/smoke-ja3.sh
+  image:
+    # 三个变体共用 .github/workflows/_image.yml：plan -> build(架构组矩阵) -> smoke(每平台一个 job) -> publish
+    # 变体差异全部通过 with 传入，避免三份 workflow 重复维护
+    uses: ./.github/workflows/_image.yml
+    secrets: inherit
+    with:
+      variant: ja3
+      dockerfile: Dockerfile.ja3
+      latest_tag: ja3-latest
+      version_prefix: 'ja3-'
+      smoke_role: ja3
+      default_platforms: linux/386,linux/arm64,linux/amd64,linux/arm/v6,linux/arm/v7,linux/riscv64
+      platforms: ${{ github.event.inputs.platforms || '' }}
+      push: ${{ github.event.inputs.push == 'true' }}
+      native_arm: ${{ github.event.inputs.native_arm != 'false' }}
