@@ -14,8 +14,15 @@ ENV CURL_VERSION=8.23.0
 ENV NGTCP2_VERSION=1.25.0
 ENV NGHTTP3_VERSION=1.18.0
 
+# 本地构建加速（CI 在海外无需配置）：APK_MIRROR 例 https://mirrors.tuna.tsinghua.edu.cn，
+# PIP_MIRROR 例 https://pypi.tuna.tsinghua.edu.cn/simple（与 ddddocr-docker 保持一致）
+ARG APK_MIRROR=""
+ARG PIP_MIRROR=""
+
 # Install packages & Install openssl nghttp3 ngtcp2 curl & Pip install pycurl
-RUN apk update && \
+RUN { [ -z "$APK_MIRROR" ] || sed -i "s|https://dl-cdn.alpinelinux.org|$APK_MIRROR|g" /etc/apk/repositories; } && \
+    { [ -z "$PIP_MIRROR" ] || export PIP_INDEX_URL="$PIP_MIRROR"; } && \
+    apk update && \
     apk add --update --no-cache bash git tzdata ca-certificates python3 py3-six && \
     apk add --update --no-cache --virtual .build_deps nano openssh-client \
     cmake make perl autoconf g++ automake linux-headers libtool util-linux file \
