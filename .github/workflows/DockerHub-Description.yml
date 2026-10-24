@@ -6,6 +6,8 @@ on:
     paths:
       - README.md
       - .github/workflows/DockerHub-Description.yml
+  # 手动同步（README 未改动但想刷新 Hub 描述时用）
+  workflow_dispatch:
 jobs:
   dockerHubDescription:
     if: startsWith(github.repository, 'qiandao-today/pycurl-docker')

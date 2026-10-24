@@ -16,6 +16,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      # 五平台含 386/arm/v6/arm/v7，runner 仅 amd64 本机，必须注册 QEMU 二进制翻译，
+      # 否则非本机平台的 RUN 步骤直接 exec format error
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Login to ghcr.io
