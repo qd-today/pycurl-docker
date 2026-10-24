@@ -1,0 +1,49 @@
+diff --git a/src/easyopt.c b/src/easyopt.c
+index dc46045..ca84e87 100644
+--- a/src/easyopt.c
++++ b/src/easyopt.c
+@@ -496,6 +496,12 @@ PYCURL_IGNORE_DEPRECATED_END
+ #if LIBCURL_VERSION_NUM >= MAKE_LIBCURL_VERSION(8, 14, 0)
+     case CURLOPT_SSL_SIGNATURE_ALGORITHMS:
+ #endif
++    /* curl-impersonate: master option for the browser impersonation target.
++     * NOTE: CURLOPT_IMPERSONATE is an enum constant of curl-impersonate's fork,
++     * not a preprocessor macro -- it cannot be guarded with #ifdef (always false).
++     * This patch therefore compiles unconditionally and must only be applied
++     * against curl-impersonate's libcurl headers. */
++    case CURLOPT_IMPERSONATE:
+         str = PyText_AsString_NoNUL(obj, &encoded_obj);
+         if (str == NULL)
+             return NULL;
+@@ -526,6 +532,18 @@ PYCURL_IGNORE_DEPRECATED_END
+         Py_XDECREF(encoded_obj);
+         CURLERROR_RETVAL();
+     }
++    /* curl-impersonate: an impersonation profile carries its own browser
++     * headers (including User-Agent) as base headers, but libcurl prefers
++     * CURLOPT_USERAGENT over base headers -- and pycurl sets a default
++     * User-Agent on every handle at construction time. Clear it here so the
++     * profile's headers take effect; a USERAGENT set afterwards still wins. */
++    if (option == CURLOPT_IMPERSONATE) {
++        res = curl_easy_setopt(self->handle, CURLOPT_USERAGENT, NULL);
++        if (res != CURLE_OK) {
++            Py_XDECREF(encoded_obj);
++            CURLERROR_RETVAL();
++        }
++    }
+     /* libcurl does not copy the value of CURLOPT_POSTFIELDS */
+     if (option == CURLOPT_POSTFIELDS) {
+         PyObject *store_obj;
+diff --git a/src/module.c b/src/module.c
+index da229a6..84cde0e 100644
+--- a/src/module.c
++++ b/src/module.c
+@@ -1523,6 +1523,8 @@ PYCURL_IGNORE_DEPRECATED_END
+ #if LIBCURL_VERSION_NUM >= MAKE_LIBCURL_VERSION(8, 14, 0)
+     insint_c(d, "SSL_SIGNATURE_ALGORITHMS", CURLOPT_SSL_SIGNATURE_ALGORITHMS);
+ #endif
++    /* curl-impersonate: see the note in src/easyopt.c -- enum constant, no #ifdef */
++    insint_c(d, "IMPERSONATE", CURLOPT_IMPERSONATE);
+ 
+     /* curl_TimeCond: constants for setopt(TIMECONDITION, x) */
+     insint_c(d, "TIMECONDITION_NONE", CURL_TIMECOND_NONE);

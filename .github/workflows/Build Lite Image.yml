@@ -1,25 +1,43 @@
 name: Build Lite Image
-on: push
+on:
+  push:
+    tags:
+      - '*'
 jobs:
   build:
-      runs-on: ubuntu-latest
-      name: Build image job
-      
-      steps:
-          - name: Checkout master
-            uses: actions/checkout@master
-          - name: Get version
-            id: get_version
-            if: startsWith(github.ref, 'refs/tags/')
-            run: echo ::set-output name=VERSION::${GITHUB_REF/refs\/tags\//}
-          - name: Build and publish image
-            uses: ilteoood/docker_buildx@master
-            if: startsWith(github.ref, 'refs/tags/')
-            with:
-              publish: true
-              imageName: a76yyyy/pycurl # dockerid/imageName
-              platform: linux/386,linux/arm64,linux/amd64,linux/arm/v6,linux/arm/v7 # 你准备构建的镜像平台
-              tag: lite-latest,lite-${{ steps.get_version.outputs.VERSION }}
-              dockerUser: ${{ secrets.DOCKER_USERNAME }} # docker hub userid 在setting创建secrets name=DOCKER_USERNAME  value=dockerid
-              dockerPassword: ${{ secrets.DOCKER_PASSWORD }} # docker hub password,在setting创建secrets name=DOCKER_PASSWORD  value=dockerpassword
-              dockerFile: Dockerfile.lite
+    runs-on: ubuntu-latest
+    name: Build image job
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: a76yyyy/pycurl
+          # 关闭 semver 等模式的自动 latest，只保留下面显式声明的标签，
+          # 避免自动 latest 覆盖版本标签（参见 ddddocr 项目的教训）
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,value=lite-latest
+            type=raw,value=lite-${{ github.ref_name }}
+      - name: Build and publish image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.lite
+          platforms: linux/386,linux/arm64,linux/amd64,linux/arm/v6,linux/arm/v7
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          # 不产出 attestation 清单，保持与旧版行为一致（旧 Docker 客户端兼容性）
+          provenance: false
