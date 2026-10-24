@@ -85,7 +85,8 @@ jobs:
           plats = [p.strip() for p in raw.split(",") if p.strip()] if raw else default
 
           allowed = {"linux/amd64", "linux/386", "linux/arm64", "linux/arm/v7",
-                     "linux/arm/v6", "linux/ppc64le", "linux/riscv64", "linux/s390x"}
+                     "linux/arm/v6", "linux/ppc64le", "linux/riscv64", "linux/s390x",
+                     "linux/loong64"}
           bad = [p for p in plats if p not in allowed]
           if bad:
               sys.exit("::error::未知平台: %s（可选: %s）" % (",".join(bad), ",".join(sorted(allowed))))
@@ -95,11 +96,16 @@ jobs:
           variant = os.environ["VARIANT"]
 
           # 按「是否本机原生 + 编译量级」分组；组间完全并行，互不抢 CPU
+          # 注意 loong64：只有主变体能支持。主变体 FROM a76yyyy/ddddocr:latest，
+          # 该镜像的 manifest 已含 loong64（用龙芯社区基座单独构建后合并）；
+          # lite 变体 FROM alpine:3.24 官方镜像，Docker Hub 无 loong64 变体；
+          # ja3 变体的 BoringSSL 无 loongarch 目标。所以默认平台里只有主变体带它。
           GROUPS = [
               ("x86",     "ubuntu-latest", ["linux/amd64", "linux/386"]),
               ("arm",     arm_runner,      ["linux/arm64", "linux/arm/v7", "linux/arm/v6"]),
               ("ppc64le", "ubuntu-latest", ["linux/ppc64le", "linux/s390x"]),
               ("riscv64", "ubuntu-latest", ["linux/riscv64"]),
+              ("loong64", "ubuntu-latest", ["linux/loong64"]),
           ]
           include = []
           for name, runner, group_plats in GROUPS:
@@ -111,12 +117,12 @@ jobs:
 
           # 该平台上的基座 ddddocr 是否带完整 OCR 栈（决定冒烟期望 ocr / nocr）
           OCR_STACK = {"linux/amd64", "linux/arm64", "linux/arm/v7",
-                       "linux/ppc64le", "linux/riscv64"}
+                       "linux/ppc64le", "linux/riscv64", "linux/loong64"}
           GROUP_OF = {
               "linux/amd64": "x86", "linux/386": "x86",
               "linux/arm64": "arm", "linux/arm/v7": "arm", "linux/arm/v6": "arm",
               "linux/ppc64le": "ppc64le", "linux/s390x": "ppc64le",
-              "linux/riscv64": "riscv64",
+              "linux/riscv64": "riscv64", "linux/loong64": "loong64",
           }
           smoke = []
           for p in plats:

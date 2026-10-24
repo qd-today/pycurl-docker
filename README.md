@@ -129,7 +129,7 @@ ppc64le / riscv64 / s390x）。也就是说 qd 在 ppc64le / s390x / riscv64 上
 
 | 变体 | 标签 | 默认平台数 | 说明 |
 |---|---|---|---|
-| 主变体 | `latest` | 8 | ddddocr + onnxruntime + OpenSSL + HTTP3，平台最全 |
+| 主变体 | `latest` | **9** | ddddocr + onnxruntime + OpenSSL + HTTP3，平台最全（含 loong64） |
 | ja3 | `ja3-latest` | 6 | curl-impersonate + BoringSSL，TLS 指纹伪装；平台受 BoringSSL 限制 |
 | lite | `lite-latest` | 8 | 仅 pycurl（无 ddddocr/onnxruntime），Alpine 原生 OpenSSL |
 
