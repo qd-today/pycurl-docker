@@ -3,7 +3,7 @@ FROM a76yyyy/ddddocr:latest
 
 # 维护者信息
 LABEL maintainer "a76yyyy <q981331502@163.com>"
-LABEL org.opencontainers.image.source=https://github.com/qiandao-today/pycurl-docker
+LABEL org.opencontainers.image.source=https://github.com/qd-today/pycurl-docker
 
 # Envirenment for pycurl
 ENV PYCURL_SSL_LIBRARY=openssl

@@ -12,7 +12,7 @@ FROM a76yyyy/ddddocr:latest
 
 # 维护者信息
 LABEL maintainer "a76yyyy <q981331502@163.com>"
-LABEL org.opencontainers.image.source=https://github.com/qiandao-today/pycurl-docker
+LABEL org.opencontainers.image.source=https://github.com/qd-today/pycurl-docker
 
 # pycurl 编译期 SSL 后端声明（BoringSSL 与 OpenSSL API 兼容）
 ENV PYCURL_SSL_LIBRARY=openssl
