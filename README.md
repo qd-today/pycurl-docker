@@ -109,7 +109,7 @@ c.perform()
 
 # **Pycurl-Lite-Docker**
 
-**Python3.14:Alpine-edge only with pycurl（不含 ddddocr/onnxruntime）**
+**Python3.14:Alpine 3.24 only with pycurl（不含 ddddocr/onnxruntime）**
 
 ## **Repository**
 
@@ -123,10 +123,10 @@ docker pull a76yyyy/pycurl:lite-latest
 
 ## **VERSION**
 
-- ALPINE_VERSION == edge
+- ALPINE_VERSION == 3.24（稳定分支；与 ddddocr 基础镜像对齐，构建可复现）
 - PYTHON_VERSION == 3.14
 - CURL_VERSION == 8.23.0
-- OPENSSL_VERSION == 3.5.9 (LTS)
+- OPENSSL_VERSION == 3.5.9 (LTS，Alpine 3.24 原生包，随分支安全更新)
 - NGTCP2_VERSION == 1.25.0
 - NGHTTP3_VERSION == 1.18.0
 - PYCURL_VERSION == 7.48.0

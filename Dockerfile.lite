@@ -1,5 +1,7 @@
 # 基础镜像（lite 版：纯 Alpine，不含 ddddocr/onnxruntime，体积最小）
-FROM alpine:edge
+# 钉 3.24 稳定分支：与 ddddocr 基础镜像同分支、构建可复现；edge 是滚动分支，
+# 基座包（musl/python3/busybox）每日漂移，不适合需要可复现构建的场景
+FROM alpine:3.24
 
 # 维护者信息
 LABEL maintainer "a76yyyy <q981331502@163.com>"
@@ -7,37 +9,26 @@ LABEL org.opencontainers.image.source=https://github.com/qiandao-today/pycurl-do
 
 # Envirenment for pycurl
 ENV PYCURL_SSL_LIBRARY=openssl
-# OpenSSL 3.5 为 LTS（支持至 2030-04），且 3.5.0+ 原生提供 QUIC API，
-# ngtcp2 v1.12.0+ 可直接对接，无需再使用已废弃的 quictls fork（2025-04 abandoned）
-ENV SSL_VERSION=3.5.9
+# OpenSSL 3.5 为 LTS（支持至 2030-04），3.5.0+ 原生提供 QUIC API（libssl.so.3 含
+# OSSL_QUIC_client_method 等符号、openssl-dev 含 quic.h），ngtcp2 v1.12.0+ 可直接对接，
+# 无需再使用已废弃的 quictls fork（2025-04 abandoned）。
+# Alpine 3.24 仓库的 openssl 已追平 edge（同为 3.5.9-r0），故直接用原生 openssl-dev，
+# 不再源码编译：省一次全量编译，且与系统 CA 路径（/etc/ssl）天然一致
 ENV CURL_VERSION=8.23.0
 ENV NGTCP2_VERSION=1.25.0
 ENV NGHTTP3_VERSION=1.18.0
 
-# Install packages & Install openssl nghttp3 ngtcp2 curl & Pip install pycurl
+# Install packages & Install nghttp3 ngtcp2 curl & Pip install pycurl
 RUN apk update && \
     apk add --update --no-cache git tzdata ca-certificates python3 && \
-    apk add --update --no-cache --virtual .build_deps nano openssh-client cmake make perl autoconf g++ automake linux-headers libtool util-linux file \
-    libidn2-dev libgsasl-dev krb5-dev zstd-dev nghttp2-dev zlib-dev brotli-dev py3-pip py3-setuptools py3-wheel python3-dev c-ares-dev libpsl-dev && \
+    apk add --update --no-cache --virtual .build_deps nano openssh-client cmake make perl autoconf g++ automake linux-headers libtool util-linux \
+    libidn2-dev libgsasl-dev krb5-dev zstd-dev nghttp2-dev zlib-dev brotli-dev py3-pip py3-setuptools py3-wheel python3-dev c-ares-dev libpsl-dev \
+    openssl-dev && \
     # Alpine 3.24 起 pyconfig.h 归 python3 包所有；编译 C 扩展前检测并恢复（幂等，存在则跳过）
     ls /usr/include/python3.*/pyconfig.h >/dev/null 2>&1 || apk fix python3 && \
-    file /bin/busybox && \
-    [[ $(getconf LONG_BIT) = "32" && -z $(file /bin/busybox | grep -i "arm") ]] && configtmp="setarch i386 ./config -m32" || configtmp="./config" && \
     wget https://curl.se/download/curl-$CURL_VERSION.tar.bz2 && \
     tar xjf curl-$CURL_VERSION.tar.bz2 && \
     rm curl-$CURL_VERSION.tar.bz2 && \
-    git clone --depth 1 -b openssl-$SSL_VERSION https://github.com/openssl/openssl && \
-    cd openssl && \
-    # openssldir 必须与 Alpine 一致（/etc/ssl）：本构建会替换 /usr/lib/libssl.so.3、
-    # libcrypto.so.3，apk-tools 等系统组件依赖 libcrypto 的默认 CA 路径做证书校验，
-    # 用默认值（/usr/ssl）会导致系统级 TLS 校验失败
-    # libdir 统一用 lib：musl 无 ld-musl path 文件时默认搜索 /lib:/usr/local/lib:/usr/lib，
-    # 不含 /usr/lib64，比旧版的 lib64 自动探测 + 事后补软链更稳
-    $configtmp --prefix=/usr --libdir=lib --openssldir=/etc/ssl && \
-    make -j$(($(grep -c ^processor /proc/cpuinfo) - 0)) && \
-    make install_sw && \
-    cd .. && \
-    rm -rf openssl && \
     git clone --depth 1 -b v$NGHTTP3_VERSION https://github.com/ngtcp2/nghttp3 && \
     cd nghttp3 && \
     git submodule update --init && \
@@ -79,7 +70,9 @@ RUN apk update && \
     pip install --no-cache-dir --compile --break-system-packages pycurl && \
     apk del .build_deps && \
     # 运行时补齐被 .build_deps 清除的动态依赖（不用 --update：索引已在 RUN 开头刷新过，
-    # 避免多余的索引拉取引入网络不确定性）
-    apk add --no-cache libidn2 libgsasl zstd-libs zlib c-ares nghttp2 libpsl brotli-libs && \
+    # 避免多余的索引拉取引入网络不确定性）。libssl3/libcrypto3：openssl-dev 随
+    # .build_deps 删除后运行期仍需（curl/pycurl 动态链接；libcrypto3 虽因 apk-tools
+    # 的依赖不会被删，显式列出以防万一）
+    apk add --no-cache libidn2 libgsasl zstd-libs zlib c-ares nghttp2 libpsl brotli-libs libssl3 libcrypto3 && \
     rm -rf /var/cache/apk/* && \
     rm -rf /usr/share/man/*
