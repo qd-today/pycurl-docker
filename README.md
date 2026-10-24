@@ -4,7 +4,7 @@
 
 ## **Repository**
 
-**Github :** [https://github.com/qiandao-today/pycurl-docker](https://github.com/qiandao-today/pycurl-docker)
+**Github :** [https://github.com/qd-today/pycurl-docker](https://github.com/qd-today/pycurl-docker)
 
 **DockerHub :** [https://hub.docker.com/r/a76yyyy/pycurl](https://hub.docker.com/r/a76yyyy/pycurl)
 
@@ -52,7 +52,7 @@ LDFLAGS="-Wl,-rpath,/usr/lib" ./configure \
 
 ## **Repository**
 
-**Github :** [https://github.com/qiandao-today/pycurl-docker](https://github.com/qiandao-today/pycurl-docker)
+**Github :** [https://github.com/qd-today/pycurl-docker](https://github.com/qd-today/pycurl-docker)
 
 **DockerHub :** [https://hub.docker.com/r/a76yyyy/pycurl](https://hub.docker.com/r/a76yyyy/pycurl)
 
@@ -107,13 +107,53 @@ c.perform()
 > 目标内部配置，无需也无法手动设置。若不能用打过补丁的 pycurl，也可用 ctypes
 > 直调 `curl_easy_setopt(handle, 10999, b"chrome152")`（选项号即 `CURLOPT_IMPERSONATE`）。
 
+## **ja3 变体的平台天花板**
+
+ja3 变体的平台范围由 **BoringSSL 的架构支持**决定，而不是 Dockerfile 的选择。
+BoringSSL 在 `include/openssl/target.h` 中的官方架构清单只有：
+x86 / x86_64 / aarch64 / arm / mips64 / **riscv64** / pnacl / wasm / asmjs / myriad2。
+
+| 平台 | ja3 变体 | 原因 |
+|---|---|---|
+| linux/amd64、linux/386、linux/arm64、linux/arm/v7、linux/arm/v6 | ✅ 发布 | 在 BoringSSL 官方清单内 |
+| linux/riscv64 | ✅ 发布 | 官方清单内（`OPENSSL_RISCV64`） |
+| linux/ppc64le | ✗ 不发布 | 不在官方清单内。虽是小端、加 `target.h` 补丁 + 关 `-Werror=unused-function` 可编译，但需长期维护对加密库的源码补丁、每次升级 curl-impersonate 都要重新核对，收益不及成本。需要时可 `workflow_dispatch` 指定 `platforms=linux/ppc64le` 手工构建，**不承诺可用** |
+| linux/s390x | ✗ 永不支持 | 大端。`target.h` 原文："Functions will not produce the correct answer on other systems"，即能编过也会算错 |
+| linux/loong64 | ✗ 不发布 | BoringSSL 无 loongarch 条目；且基座需拆独立 job + imagetools 合并，暂缓 |
+
+**功能不受影响**：主变体与 lite 变体使用 OpenSSL，不受上述限制（默认 8 平台，含
+ppc64le / riscv64 / s390x）。也就是说 qd 在 ppc64le / s390x / riscv64 上可以正常运行，
+只是无法使用 ja3 变体提供的 TLS 指纹伪装能力。
+
+## **平台支持矩阵（三变体）**
+
+| 变体 | 标签 | 默认平台数 | 说明 |
+|---|---|---|---|
+| 主变体 | `latest` | 8 | ddddocr + onnxruntime + OpenSSL + HTTP3，平台最全 |
+| ja3 | `ja3-latest` | 6 | curl-impersonate + BoringSSL，TLS 指纹伪装；平台受 BoringSSL 限制 |
+| lite | `lite-latest` | 8 | 仅 pycurl（无 ddddocr/onnxruntime），Alpine 原生 OpenSSL |
+
+## **本地构建加速**
+
+三个 Dockerfile 均支持 `APK_MIRROR` / `PIP_MIRROR` 构建参数（默认空 = 与 CI 行为完全一致）。
+在国内或 QEMU 多架构构建时强烈建议启用，实测 ppc64le QEMU 下 apk 阶段可从约 50 分钟降到 2 分钟内：
+
+```bash
+docker buildx build --platform linux/ppc64le \
+  --build-arg APK_MIRROR=https://mirrors.tuna.tsinghua.edu.cn \
+  --build-arg PIP_MIRROR=https://pypi.tuna.tsinghua.edu.cn/simple \
+  -f Dockerfile -t pycurl:test . --load
+```
+
+> curl-impersonate 源码与 pycurl sdist 仍从 GitHub / PyPI 直连拉取，镜像源参数不影响这两步。
+
 # **Pycurl-Lite-Docker**
 
 **Python3.14:Alpine 3.24 only with pycurl（不含 ddddocr/onnxruntime）**
 
 ## **Repository**
 
-**Github :** [https://github.com/qiandao-today/pycurl-docker](https://github.com/qiandao-today/pycurl-docker)
+**Github :** [https://github.com/qd-today/pycurl-docker](https://github.com/qd-today/pycurl-docker)
 
 **DockerHub :** [https://hub.docker.com/r/a76yyyy/pycurl](https://hub.docker.com/r/a76yyyy/pycurl)
 
@@ -154,7 +194,7 @@ Python:Alpine latest with pycurl - default ( **not support TLS1.3 & Http3 & Onnx
 
 ## **Repository**
 
-**Github :** [https://github.com/qiandao-today/pycurl-docker/tree/default](https://github.com/qiandao-today/pycurl-docker/tree/default)
+**Github :** [https://github.com/qd-today/pycurl-docker/tree/default](https://github.com/qd-today/pycurl-docker/tree/default)
 
 **DockerHub :** [https://hub.docker.com/r/a76yyyy/pycurl](https://hub.docker.com/r/a76yyyy/pycurl)
 
