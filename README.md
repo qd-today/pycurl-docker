@@ -1,6 +1,6 @@
 # pycurl Docker 镜像（Alpine）
 
-基于 Alpine 的 pycurl 镜像。同一仓库三条发布线，按需选择：
+基于 Alpine 的 pycurl 镜像。同一仓库四条发布线，按需选择：
 
 | 标签 | 内容 |
 |---|---|
@@ -12,16 +12,16 @@
 - Docker Hub：<https://hub.docker.com/r/a76yyyy/pycurl>
 - 源码：[qd-today/pycurl-docker](https://github.com/qd-today/pycurl-docker)
 
-三条线都支持 TLS 1.3、HTTP/3（QUIC）、zstd 与 brotli；`latest` 与 `ja3-latest` 另带
+四条线都支持 TLS 1.3、HTTP/3（QUIC）、zstd 与 brotli；`latest` 与 `ja3-latest` 另带
 ddddocr 与 onnxruntime。
 
 ## 快速开始
 
 ```bash
-docker pull a76yyyy/pycurl:latest      # 或 ja3-latest / lite-latest
+docker pull a76yyyy/pycurl:latest      # 或 ja3-latest / lite-latest / ja3-lite-latest
 ```
 
-在 Python 中使用（三个标签一致）：
+在 Python 中使用（四个标签一致）：
 
 ```python
 import pycurl
@@ -58,8 +58,8 @@ OpenSSL 3.5 是 LTS（支持至 2030-04），原生提供 QUIC API，ngtcp2 v1.1
 ## TLS 指纹伪装（ja3-latest）
 
 基于 [lexiforest/curl-impersonate](https://github.com/lexiforest/curl-impersonate) 的 superbuild
-（固定 commit `df38987`，构建脚本里的 `CURL_IMPERSONATE_REF` 可覆盖），浏览器指纹覆盖 Chrome 151/152、Safari 27、Firefox 153–155（含 ECH、ZSTD、
-PQC 与 HTTP/3 指纹）。
+（固定 commit `df38987`，构建脚本里的 `CURL_IMPERSONATE_REF` 可覆盖），浏览器指纹覆盖
+Chrome 151/152、Safari 27、Firefox 153–155（含 ECH、ZSTD、PQC 与 HTTP/3 指纹）。
 
 命令行：镜像内的 `curl` 默认以 chrome152 发起请求，也可显式指定目标或使用其它包装脚本。
 
@@ -108,7 +108,7 @@ c.perform()
 | linux/s390x | ✓ | — | ✓ | — |
 | linux/loong64 | ✓ | — | ✓ | — |
 
-ja3 线的平台范围由 BoringSSL 决定，而非 Dockerfile 的选择。BoringSSL 在
+ja3 与 ja3-lite 的平台范围由 BoringSSL 决定，而非 Dockerfile 的选择。BoringSSL 在
 `include/openssl/target.h` 的官方架构清单只有 x86 / x86_64 / aarch64 / arm / mips64 /
 riscv64 / pnacl / wasm / asmjs / myriad2，因此：
 
@@ -162,10 +162,10 @@ LDFLAGS="-Wl,-rpath,/usr/lib" ./configure \
 
 `ja3` 线的 curl 由 curl-impersonate 的 superbuild 产出，配置由上游决定。
 
-pycurl 版本由 `PYCURL_VERSION` 构建参数固定（默认 7.48.0），三条线一致；需要其它版本时
+pycurl 版本由 `PYCURL_VERSION` 构建参数固定（默认 7.48.0），四条线一致；需要其它版本时
 `--build-arg PYCURL_VERSION=x.y.z`，与 `APK_MIRROR` / `PIP_MIRROR` 一起传入即可。
 
-三个构建参数默认即 CI 行为，国内构建可按下表覆盖：
+三个构建参数留空即与 CI 行为一致，国内构建可按下表覆盖：
 
 | 参数 | 作用 | 国内构建时的示例 |
 |---|---|---|
@@ -201,7 +201,7 @@ plan    按 dispatch 的 platforms 输入计算架构分组
   ├─ build ppc64le  (ubuntu-latest)     ppc64le
   ├─ build s390x    (ubuntu-latest)     s390x
   ├─ build riscv64  (ubuntu-latest)     riscv64
-  └─ build loong64  (ubuntu-latest)     loong64（仅 latest 线）
+  └─ build loong64  (ubuntu-latest)     loong64（latest 与 lite 线）
         ↓ 全部构建成功
   smoke（每个平台一个 job）  复用构建层缓存重建镜像后逐平台实跑
         ↓ 全部冒烟通过
@@ -211,7 +211,7 @@ plan    按 dispatch 的 platforms 输入计算架构分组
 ### 设计原则
 
 1. **发布即全绿**：`publish` 需要所有构建与所有冒烟成功，测试失败不产生 tag。
-2. **零重复编译**：构建阶段把层缓存写入 GHA cache（scope 按「标签-架构组」隔离），冒烟与
+2. **零重复编译**：构建阶段把层缓存写入 GHA cache（scope 按「线-架构组」隔离），冒烟与
    发布阶段 `cache-from` 命中同一份缓存，同一次提交不重复编译。
 3. **不产临时 tag**：发布模式下各架构组以 `push-by-digest` 推到 Docker Hub（不带 tag），
    `publish` 用 `imagetools create` 合并成正式多架构 tag。
@@ -219,7 +219,7 @@ plan    按 dispatch 的 platforms 输入计算架构分组
 ### 触发与跳过
 
 tag 推送始终全量构建。workflow_dispatch 会先比对「该分支最近一次成功运行的 commit」，
-按变体判定是否需要重建：共享输入（`patches/`、`tests/`、`_image.yml`）改动重建全部；
+按线判定是否需要重建：共享输入（`patches/`、`tests/`、`_image.yml`）改动重建全部；
 某个 Dockerfile 改动只重建对应那条线，派生文件跟着基准走（改 `Dockerfile.ja3` 会同时
 重建 ja3 与 ja3-lite）；只改文档、或同一 commit 已有成功运行则整体跳过。`force` 可强制重跑。
 
@@ -228,12 +228,14 @@ tag 推送始终全量构建。workflow_dispatch 会先比对「该分支最近�
 | 输入 | 默认 | 说明 |
 |---|---|---|
 | `push` | false | 不勾选即只构建与冒烟，不发布任何镜像 |
-| `platforms` | 空（该标签的全部平台） | 平台子集用于加速迭代；子集构建默认禁止发布 |
+| `platforms` | 空（该条线的全部平台） | 平台子集用于加速迭代；子集构建默认禁止发布 |
 | `native_arm` | true | 用 `ubuntu-24.04-arm` 原生构建 arm64；该 runner 不可用时取消勾选回退 QEMU |
+| `pycurl_version` | 空（用 Dockerfile 默认值） | 指定 pycurl 版本 |
+| `force` | false | 强制重新构建，跳过「仅文档改动 / 同一 commit 已有成功运行」的判定 |
 
 ### 冒烟
 
-`tests/smoke.py` 按标签与 OCR 期望显式传参：
+`tests/smoke.py` 按线与 OCR 期望显式传参（ja3-lite 复用 ja3 角色）：
 
 ```bash
 docker run --rm -i --platform <platform> <image> \
