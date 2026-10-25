@@ -3,7 +3,7 @@
 
 容器内以 stdin 执行，脚本不进镜像、不加层、不依赖 bind mount、不访问外网：
 
-    docker run --rm -i --platform <platform> <image> python3 - <role> [ocr|nocr] < tests/smoke.py
+    docker run --rm -i --platform <platform> <image> python3 - <role> [ocr|nocr] [platform] < tests/smoke.py
 
     role: main | ja3 | lite      —— 变体自身的固有能力要求
     argv2: ocr | nocr            —— 该平台上是否应该有 OCR 栈（默认 ocr）
@@ -23,9 +23,11 @@ chrome152 的返回值，也等于本实现的离线计算结果（且裸 libcur
 说明指纹确实被 impersonate 改写）。
 """
 
+import glob
 import hashlib
 import platform
 import socket
+import struct
 import sys
 import time
 import threading
@@ -37,6 +39,50 @@ GREASE = frozenset({
 })
 
 ROLES = ("main", "ja3", "lite")
+
+# ELF e_machine 编码（/usr/include/elf.h）
+ELF_MACHINE = {
+    "linux/amd64": 62, "linux/386": 3, "linux/arm64": 183,
+    "linux/arm/v7": 40, "linux/arm/v6": 40, "linux/ppc64le": 21,
+    "linux/riscv64": 243, "linux/s390x": 22, "linux/loong64": 258,
+}
+
+
+def elf_machine(path):
+    """读 ELF 头的 e_machine（不依赖 readelf/file，镜像里未必有）。"""
+    with open(path, "rb") as handle:
+        header = handle.read(20)
+    assert header[:4] == b"\x7fELF", "%s 不是 ELF 文件" % path
+    # EI_DATA: 1=小端 2=大端（s390x 大端，e_machine 也按大端存）
+    endian = "<" if header[5] == 1 else ">"
+    return struct.unpack(endian + "H", header[18:20])[0]
+
+
+def check_arch(platform_name, patterns):
+    """断言镜像里的原生产物确实是目标平台的机器码。
+
+    这是「所有未显式声明的架构探测」的通用兜底。本次重构踩过两个同源坑：
+    OpenSSL 的 ./config 与 OpenCV 的 cmake 都靠 uname 探测，而在原生 arm64 runner 上
+    armv7 容器走内核 compat 模式、uname 报成宿主 aarch64。逐个去修每个 configure
+    不可持续，改成在产物层面验一次：机器码架构不对就立刻失败。
+    """
+    expected = ELF_MACHINE.get(platform_name)
+    if expected is None:
+        print("跳过 ELF 架构校验（未知平台 %r）" % platform_name)
+        return
+
+    checked = 0
+    for pattern in patterns:
+        for path in sorted(glob.glob(pattern)):
+            got = elf_machine(path)
+            assert got == expected, (
+                "%s 的 ELF machine=%d，期望 %d（%s）—— 构建时架构探测错了"
+                % (path, got, expected, platform_name)
+            )
+            checked += 1
+    assert checked, "没有找到可校验的原生产物（检查 glob 模式是否写错）"
+    print("ELF 架构校验通过：%d 个产物 = %s（e_machine=%d）"
+          % (checked, platform_name, expected))
 # chrome152 profile 的 ja3n（扩展排序归一化后的 md5），来源见模块 docstring
 CHROME152_JA3N = "bd4930bd9b000ee684830e44bab76fdf"
 CHROME152_UA_PREFIX = (
@@ -342,8 +388,9 @@ def check_ja3():
 def main(argv):
     role = argv[1] if len(argv) > 1 else ""
     ocr = (argv[2] if len(argv) > 2 else "ocr")
+    platform_name = argv[3] if len(argv) > 3 else ""
     if role not in ROLES:
-        raise SystemExit("用法: python3 - <%s> [ocr|nocr] < tests/smoke.py" % "|".join(ROLES))
+        raise SystemExit("用法: python3 - <%s> [ocr|nocr] [platform] < tests/smoke.py" % "|".join(ROLES))
     if ocr not in ("ocr", "nocr"):
         raise SystemExit("第二个参数只能是 ocr 或 nocr，收到: %r" % ocr)
 
@@ -352,6 +399,14 @@ def main(argv):
 
     print("== pycurl 基础能力 ==")
     check_pycurl()
+
+    print("== 产物架构 ==")
+    # libcurl / libssl 覆盖自编译的加密与传输栈；pycurl 扩展覆盖 C 扩展编译链路
+    check_arch(platform_name, [
+        "/usr/lib/python3.*/site-packages/pycurl*.so",
+        "/usr/lib/libcurl*.so.*",
+        "/usr/lib/libssl.so.3",
+    ])
 
     print("== 真实 HTTPS 请求 ==")
     check_https()

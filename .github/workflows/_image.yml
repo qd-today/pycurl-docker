@@ -240,7 +240,7 @@ jobs:
       - name: Run smoke (${{ inputs.smoke_role }}/${{ matrix.ocr }})
         run: |
           docker run --rm -i --platform ${{ matrix.platform }} pycurl-smoke:test \
-            python3 - ${{ inputs.smoke_role }} ${{ matrix.ocr }} < tests/smoke.py
+            python3 - ${{ inputs.smoke_role }} ${{ matrix.ocr }} ${{ matrix.platform }} < tests/smoke.py
 
   publish:
     needs: [plan, build, smoke]
