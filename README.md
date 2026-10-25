@@ -123,6 +123,20 @@ riscv64 / pnacl / wasm / asmjs / myriad2，因此：
 `latest` 与 `lite-latest` 使用 OpenSSL，不受上述限制；qd 在 ppc64le / s390x / riscv64 上可正常
 运行，只是用不到 TLS 指纹伪装。
 
+## 镜像体积
+
+以 arm64 为例：
+
+| 线 | 首次拉取 | 占用磁盘 | 容器内 |
+|---|---|---|---|
+| `latest` | 173 MB | 542 MB | 346 MB |
+| `ja3-latest` | 195 MB | 607 MB | 391 MB |
+| `lite-latest` | 34 MB | 127 MB | 88 MB |
+| `ja3-lite-latest` | 63 MB | 229 MB | 158 MB |
+
+多架构镜像只下载你所在架构的那一份。差异主要来自基座：`latest` 与 `ja3-latest`
+基于 ddddocr（带 OCR 栈），另外两条是纯 Alpine——只要 pycurl 时选后两条，小 3–4 倍。
+
 ## 标签
 
 | 标签 | 含义 |
