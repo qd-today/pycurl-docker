@@ -128,21 +128,18 @@ riscv64 / pnacl / wasm / asmjs / myriad2，因此：
 | 标签 | 含义 |
 |---|---|
 | `latest`、`ja3-latest`、`lite-latest`、`ja3-lite-latest` | 四条线各自的最新构建 |
-| `<版本>`、`ja3-<版本>`、`lite-<版本>`、`ja3-lite-<版本>` | 版本号标签，与仓库发布版本对齐，例如 `1.5.0` 与 `ja3-lite-1.5.0` |
+| `<版本>`、`ja3-<版本>`、`lite-<版本>`、`ja3-lite-<版本>` | 版本号标签，与仓库发布版本对齐 |
 
 发布由 tag 推送触发，四条线各自构建全平台并合并 manifest；日常验证走 workflow_dispatch，
 默认不推送任何镜像。
-
-dispatch 时只重建受影响的变体：改动落在某个 Dockerfile 上就只重建对应那条线（派生文件
-跟着基准走，例如改 `Dockerfile.ja3` 会同时重建 ja3 与 ja3-lite）；改 `patches/`、`tests/`
-或 `_image.yml` 会重建全部；只改文档、或该 commit 已验证过则整体跳过。`force` 可强制重跑。
 
 ## 构建
 
 四个 Dockerfile 对应四条线：`Dockerfile`（latest）、`Dockerfile.ja3`（ja3-latest）、
 `Dockerfile.lite`（lite-latest）、`Dockerfile.ja3.lite`（ja3-lite-latest）。
-后两者与各自的非 lite 版本只差一行 `FROM`（`Dockerfile.lite.loong64` 也遵循同样约定，
-CI 会校验「除 FROM 外完全一致」）。
+
+派生文件只换基座、其余与基准逐字相同，CI 会校验这一点：
+`Dockerfile.ja3.lite` 取自 `Dockerfile.ja3`，`Dockerfile.lite.loong64` 取自 `Dockerfile.lite`。
 
 `latest` 与 `lite` 自编 curl，配置项一致：
 
@@ -168,7 +165,7 @@ LDFLAGS="-Wl,-rpath,/usr/lib" ./configure \
 pycurl 版本由 `PYCURL_VERSION` 构建参数固定（默认 7.48.0），三条线一致；需要其它版本时
 `--build-arg PYCURL_VERSION=x.y.z`，与 `APK_MIRROR` / `PIP_MIRROR` 一起传入即可。
 
-本地构建可加速，三个参数都是空或默认值时与 CI 行为一致：
+三个构建参数默认即 CI 行为，国内构建可按下表覆盖：
 
 | 参数 | 作用 | 国内构建时的示例 |
 |---|---|---|
@@ -184,8 +181,8 @@ docker buildx build --platform linux/ppc64le \
   -f Dockerfile -t pycurl:test . --load
 ```
 
-官方 apk 源在国内约 40 KB/s、清华源约 2 MB/s，差距 50 倍——ppc64le 的 apk 阶段因此可从
-约 50 分钟降到 2 分钟以内。镜像源再快也救不了 GitHub 直连慢的情况，那要用 `GIT_DOMAIN`。
+国内构建建议三个参数一起给：apk 与 pip 走镜像，源码 clone 走 `GIT_DOMAIN`。只给前两个时，
+构建仍会卡在从 GitHub 拉 openssl / nghttp3 / ngtcp2 / curl-impersonate。
 
 ---
 
@@ -217,6 +214,13 @@ plan    按 dispatch 的 platforms 输入计算架构分组
    发布阶段 `cache-from` 命中同一份缓存，同一次提交不重复编译。
 3. **不产临时 tag**：发布模式下各架构组以 `push-by-digest` 推到 Docker Hub（不带 tag），
    `publish` 用 `imagetools create` 合并成正式多架构 tag。
+
+### 触发与跳过
+
+tag 推送始终全量构建。workflow_dispatch 会先比对「该分支最近一次成功运行的 commit」，
+按变体判定是否需要重建：共享输入（`patches/`、`tests/`、`_image.yml`）改动重建全部；
+某个 Dockerfile 改动只重建对应那条线，派生文件跟着基准走（改 `Dockerfile.ja3` 会同时
+重建 ja3 与 ja3-lite）；只改文档或该 commit 已验证过则整体跳过。`force` 可强制重跑。
 
 ### workflow_dispatch 输入
 
