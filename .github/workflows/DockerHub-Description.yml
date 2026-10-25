@@ -15,6 +15,20 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Check short description fits Docker Hub's limit
+      # Docker Hub 短描述上限是 100 字节（不是 100 字符），超了会被静默截断——
+      # 之前「…lite 轻量无 OCR」就被截成「…lite 轻量无 」，页面上看不出来。
+      # 这里显式校验，避免改仓库描述时又踩一次。
+      env:
+        SHORT: ${{ github.event.repository.description }}
+      run: |
+        bytes=$(printf '%s' "$SHORT" | wc -c | tr -d ' ')
+        echo "短描述 ${bytes} 字节 / 上限 100：${SHORT}"
+        if [ "$bytes" -gt 100 ]; then
+          echo "::error::Docker Hub 短描述上限 100 字节（中文每字 3 字节），当前 ${bytes} 字节会被截断"
+          exit 1
+        fi
+
     - name: Docker Hub Description
       uses: peter-evans/dockerhub-description@v4
       with:
