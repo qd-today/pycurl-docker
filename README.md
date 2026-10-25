@@ -198,7 +198,8 @@ docker buildx build --platform linux/ppc64le \
 plan    按 dispatch 的 platforms 输入计算架构分组
   ├─ build x86      (ubuntu-latest)     amd64(原生) + 386
   ├─ build arm      (ubuntu-24.04-arm)  arm64(原生) + armv7 + armv6
-  ├─ build ppc64le  (ubuntu-latest)     ppc64le + s390x
+  ├─ build ppc64le  (ubuntu-latest)     ppc64le
+  ├─ build s390x    (ubuntu-latest)     s390x
   ├─ build riscv64  (ubuntu-latest)     riscv64
   └─ build loong64  (ubuntu-latest)     loong64（仅 latest 线）
         ↓ 全部构建成功

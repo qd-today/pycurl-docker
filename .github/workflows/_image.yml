@@ -211,7 +211,10 @@ jobs:
           GROUPS = [
               ("x86",     "ubuntu-latest", ["linux/amd64", "linux/386"]),
               ("arm",     arm_runner,      ["linux/arm64", "linux/arm/v7", "linux/arm/v6"]),
-              ("ppc64le", "ubuntu-latest", ["linux/ppc64le", "linux/s390x"]),
+              # ppc64le 与 s390x 各自成组：两者都要在 QEMU 下全量编译 OpenSSL / curl，
+              # 合在一组会串行累加（单组接近 5 小时作业上限），拆开后并行
+              ("ppc64le", "ubuntu-latest", ["linux/ppc64le"]),
+              ("s390x",   "ubuntu-latest", ["linux/s390x"]),
               ("riscv64", "ubuntu-latest", ["linux/riscv64"]),
               ("loong64", "ubuntu-latest", ["linux/loong64"]),
           ]
@@ -230,7 +233,7 @@ jobs:
           GROUP_OF = {
               "linux/amd64": "x86", "linux/386": "x86",
               "linux/arm64": "arm", "linux/arm/v7": "arm", "linux/arm/v6": "arm",
-              "linux/ppc64le": "ppc64le", "linux/s390x": "ppc64le",
+              "linux/ppc64le": "ppc64le", "linux/s390x": "s390x",
               "linux/riscv64": "riscv64", "linux/loong64": "loong64",
           }
           # 只有基座是 ddddocr 的变体才带 OCR；lite 与 ja3-lite 都是纯 alpine 基座
