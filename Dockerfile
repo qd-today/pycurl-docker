@@ -47,6 +47,7 @@ RUN { [ -z "$APK_MIRROR" ] || sed -i "s|https://dl-cdn.alpinelinux.org|$APK_MIRR
         ppc64le) openssl_target=linux-ppc64le ;; \
         riscv64) openssl_target=linux64-riscv64 ;; \
         s390x)   openssl_target=linux64-s390x ;; \
+        loong64) openssl_target=linux64-loongarch64 ;; \
         *) echo "不支持的 TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac && \
     wget https://curl.se/download/curl-$CURL_VERSION.tar.bz2 && \
