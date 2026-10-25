@@ -2,11 +2,12 @@
 
 基于 Alpine 的 pycurl 镜像。同一仓库三条发布线，按需选择：
 
-| 标签 | 内容 | 压缩体积（amd64） |
-|---|---|---|
-| `latest` | pycurl + ddddocr / onnxruntime，自编 OpenSSL 与 ngtcp2 / nghttp3 | 251 MB |
-| `ja3-latest` | curl-impersonate + BoringSSL，提供 TLS 指纹伪装 | 245 MB |
-| `lite-latest` | 仅 pycurl，Alpine 原生 OpenSSL，不含 OCR | 36 MB |
+| 标签 | 内容 |
+|---|---|
+| `latest` | pycurl + ddddocr / onnxruntime，自编 OpenSSL 与 ngtcp2 / nghttp3 |
+| `ja3-latest` | 在 `latest` 基础上换成 curl-impersonate + BoringSSL，提供 TLS 指纹伪装 |
+| `lite-latest` | 仅 pycurl，Alpine 原生 OpenSSL，不含 OCR |
+| `ja3-lite-latest` | `lite` 的基座 + curl-impersonate，有指纹伪装、无 OCR |
 
 - Docker Hub：<https://hub.docker.com/r/a76yyyy/pycurl>
 - 源码：[qd-today/pycurl-docker](https://github.com/qd-today/pycurl-docker)
@@ -41,15 +42,15 @@ FROM a76yyyy/pycurl:latest
 
 ## 镜像内容
 
-| 组件 | latest | ja3-latest | lite-latest |
-|---|---|---|---|
-| 基础镜像 | `a76yyyy/ddddocr:latest` | `a76yyyy/ddddocr:latest` | `alpine:3.24` |
-| Python | 3.14 | 3.14 | 3.14 |
-| curl | 8.23.0（自编） | curl-impersonate 2.4.0（基于 curl 8.23.0） | 8.23.0（自编） |
-| TLS 库 | OpenSSL 3.5.9 LTS（自编） | BoringSSL（版本由 curl-impersonate v2.4.0 决定） | OpenSSL 3.5.9 LTS（Alpine 包） |
-| HTTP/3 后端 | ngtcp2 1.25.0 + nghttp3 1.18.0 | ngtcp2 + BoringSSL | 同 latest |
-| pycurl | 7.48.0（`PYCURL_VERSION` 可覆盖） | 7.48.0 + `patches/pycurl-impersonate.patch` | 7.48.0（`PYCURL_VERSION` 可覆盖） |
-| OCR | ddddocr 1.6.1 + onnxruntime 1.24.4 | 同 latest | 无 |
+| 组件 | latest | ja3-latest | lite-latest | ja3-lite-latest |
+|---|---|---|---|---|
+| 基础镜像 | `a76yyyy/ddddocr:latest` | `a76yyyy/ddddocr:latest` | `alpine:3.24` | `alpine:3.24` |
+| Python | 3.14 | 3.14 | 3.14 | 3.14 |
+| curl | 8.23.0（自编） | curl-impersonate 2.4.0（基于 curl 8.23.0） | 8.23.0（自编） | curl-impersonate 2.4.0 |
+| TLS 库 | OpenSSL 3.5.9 LTS（自编） | BoringSSL（由 curl-impersonate v2.4.0 决定） | OpenSSL 3.5.9 LTS（Alpine 包） | BoringSSL |
+| HTTP/3 后端 | ngtcp2 1.25.0 + nghttp3 1.18.0 | ngtcp2 + BoringSSL | 同 latest | ngtcp2 + BoringSSL |
+| pycurl | 7.48.0（`PYCURL_VERSION` 可覆盖） | 7.48.0 + `patches/pycurl-impersonate.patch` | 7.48.0（`PYCURL_VERSION` 可覆盖） | 同 ja3-latest |
+| OCR | ddddocr 1.6.1 + onnxruntime 1.24.4 | 同 latest | 无 | 无 |
 
 OpenSSL 3.5 是 LTS（支持至 2030-04），原生提供 QUIC API，ngtcp2 v1.12.0 起可直接对接，
 因此不需要已停止维护的 quictls fork。
@@ -95,17 +96,17 @@ c.perform()
 
 ## 支持的平台
 
-| 平台 | latest | ja3-latest | lite-latest |
-|---|---|---|---|
-| linux/amd64 | ✓ | ✓ | ✓ |
-| linux/386 | ✓ | ✓ | ✓ |
-| linux/arm64 | ✓ | ✓ | ✓ |
-| linux/arm/v7 | ✓ | ✓ | ✓ |
-| linux/arm/v6 | ✓ | ✓ | ✓ |
-| linux/ppc64le | ✓ | — | ✓ |
-| linux/riscv64 | ✓ | ✓ | ✓ |
-| linux/s390x | ✓ | — | ✓ |
-| linux/loong64 | ✓ | — | — |
+| 平台 | latest | ja3-latest | lite-latest | ja3-lite-latest |
+|---|---|---|---|---|
+| linux/amd64 | ✓ | ✓ | ✓ | ✓ |
+| linux/386 | ✓ | ✓ | ✓ | ✓ |
+| linux/arm64 | ✓ | ✓ | ✓ | ✓ |
+| linux/arm/v7 | ✓ | ✓ | ✓ | ✓ |
+| linux/arm/v6 | ✓ | ✓ | ✓ | ✓ |
+| linux/ppc64le | ✓ | — | ✓ | — |
+| linux/riscv64 | ✓ | ✓ | ✓ | ✓ |
+| linux/s390x | ✓ | — | ✓ | — |
+| linux/loong64 | ✓ | — | ✓ | — |
 
 ja3 线的平台范围由 BoringSSL 决定，而非 Dockerfile 的选择。BoringSSL 在
 `include/openssl/target.h` 的官方架构清单只有 x86 / x86_64 / aarch64 / arm / mips64 /
@@ -126,16 +127,19 @@ riscv64 / pnacl / wasm / asmjs / myriad2，因此：
 
 | 标签 | 含义 |
 |---|---|
-| `latest`、`ja3-latest`、`lite-latest` | 三条线各自的最新构建 |
-| `1.4.0`、`ja3-1.4.0`、`lite-1.4.0` | 版本号标签，与仓库发布版本对齐 |
+| `latest`、`ja3-latest`、`lite-latest`、`ja3-lite-latest` | 四条线各自的最新构建 |
+| `<版本>`、`ja3-<版本>`、`lite-<版本>`、`ja3-lite-<版本>` | 版本号标签，与仓库发布版本对齐，例如 `1.5.0` 与 `ja3-lite-1.5.0` |
 
-发布由 tag 推送触发，三条线各自构建全平台并合并 manifest；日常验证走 workflow_dispatch，
-默认不推送任何镜像。
+发布由 tag 推送触发，四条线各自构建全平台并合并 manifest；日常验证走 workflow_dispatch，
+默认不推送任何镜像。dispatch 时若改动只涉及文档、或该 commit 已经验证过，CI 会直接跳过
+构建（`force` 可强制重跑）。
 
 ## 构建
 
-三个 Dockerfile 分别对应三条线：`Dockerfile`（latest）、`Dockerfile.ja3`（ja3-latest）、
-`Dockerfile.lite`（lite-latest）。
+四个 Dockerfile 对应四条线：`Dockerfile`（latest）、`Dockerfile.ja3`（ja3-latest）、
+`Dockerfile.lite`（lite-latest）、`Dockerfile.ja3.lite`（ja3-lite-latest）。
+后两者与各自的非 lite 版本只差一行 `FROM`（`Dockerfile.lite.loong64` 也遵循同样约定，
+CI 会校验「除 FROM 外完全一致」）。
 
 `latest` 与 `lite` 自编 curl，配置项一致：
 
@@ -178,8 +182,8 @@ docker buildx build --platform linux/ppc64le \
 <details>
 <summary>CI 架构（维护者）</summary>
 
-三条线共用 `.github/workflows/_image.yml`（workflow_call），各自只有一个约 30 行的调用方，
-三条线的差异全部由 `with` 传入。
+四条线共用 `.github/workflows/_image.yml`（workflow_call），各自只有一个约 30 行的调用方，
+差异全部由 `with` 传入。
 
 ### 流水线
 
