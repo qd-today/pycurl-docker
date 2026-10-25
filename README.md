@@ -187,17 +187,3 @@ LDFLAGS="-Wl,-rpath,/usr/lib" ./configure \
     --with-gssapi \
     --enable-ares
 ```
-
-# **Pycurl-Docker-default**
-
-Python:Alpine latest with pycurl - default ( **not support TLS1.3 & Http3 & OnnxRuntime & ddddocr** )
-
-## **Repository**
-
-**Github :** [https://github.com/qd-today/pycurl-docker/tree/default](https://github.com/qd-today/pycurl-docker/tree/default)
-
-**DockerHub :** [https://hub.docker.com/r/a76yyyy/pycurl](https://hub.docker.com/r/a76yyyy/pycurl)
-
-```bash
-docker pull a76yyyy/pycurl:default-latest
-```
