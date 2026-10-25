@@ -220,7 +220,7 @@ plan    按 dispatch 的 platforms 输入计算架构分组
 tag 推送始终全量构建。workflow_dispatch 会先比对「该分支最近一次成功运行的 commit」，
 按变体判定是否需要重建：共享输入（`patches/`、`tests/`、`_image.yml`）改动重建全部；
 某个 Dockerfile 改动只重建对应那条线，派生文件跟着基准走（改 `Dockerfile.ja3` 会同时
-重建 ja3 与 ja3-lite）；只改文档或该 commit 已验证过则整体跳过。`force` 可强制重跑。
+重建 ja3 与 ja3-lite）；只改文档、或同一 commit 已有成功运行则整体跳过。`force` 可强制重跑。
 
 ### workflow_dispatch 输入
 
