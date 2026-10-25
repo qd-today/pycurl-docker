@@ -1,5 +1,5 @@
 # 构建 curl-impersonate（JA3/TLS 指纹伪装）
-# 基于 lexiforest/curl-impersonate v2.4.0 官方 superbuild：
+# 基于 lexiforest/curl-impersonate 官方 superbuild（固定 commit df38987，原 2.4.0 代码线）：
 #   - curl 8.23.0，Chrome 151/152、Safari 27、Firefox 153-155 指纹（含 ECH/ZSTD/PQC/H3 指纹）
 #   - QUIC 后端为 ngtcp2 + BoringSSL（替代已停滞的 lwthiker 0.6.1 + cloudflare/quiche 方案）
 #   - 全部依赖按上游 pinned 版本静态编译，不依赖 Alpine 包版本（nghttp2 锁定 1.63.0，规避 1.65 移除 priority flag）
@@ -24,11 +24,18 @@ ARG TARGETARCH
 ARG TARGETVARIANT
 # pycurl 版本：固定默认值以保证可复现，需要其它版本时用 --build-arg PYCURL_VERSION=x.y.z
 ARG PYCURL_VERSION=7.48.0
+# curl-impersonate 固定到 commit：上游已删除 v2.4.0 标签（2026-10-25），按 tag 会拉不到；
+# commit 不可变，也用不着担心上游再改 tag。该 commit 含 chrome152 等目标
+ARG CURL_IMPERSONATE_REF=df38987ca6214c404700b320f853243d9ddb4a06
 
-# 本地构建加速（CI 在海外无需配置）：APK_MIRROR 例 https://mirrors.tuna.tsinghua.edu.cn，
-# PIP_MIRROR 例 https://pypi.tuna.tsinghua.edu.cn/simple（与 ddddocr-docker 保持一致）
+# 本地构建加速（CI 在海外无需配置）：
+#   APK_MIRROR  例 https://mirrors.tuna.tsinghua.edu.cn
+#   PIP_MIRROR  例 https://pypi.tuna.tsinghua.edu.cn/simple
+#   GIT_DOMAIN  源码 clone 用的 GitHub 前缀，例 https://gh-proxy.com/https://github.com
+#               （openssl / nghttp3 / ngtcp2 / curl-impersonate 都从这里拉）
 ARG APK_MIRROR=""
 ARG PIP_MIRROR=""
+ARG GIT_DOMAIN="https://github.com"
 
 # pycurl 源码补丁（为 pycurl 补上 CURLOPT_IMPERSONATE 选项支持）
 COPY patches/pycurl-impersonate.patch /tmp/pycurl-impersonate.patch
@@ -45,8 +52,12 @@ RUN { [ -z "$APK_MIRROR" ] || sed -i "s|https://dl-cdn.alpinelinux.org|$APK_MIRR
     # Alpine 3.24 起 pyconfig.h 归 python3 包所有；基础镜像瘦身时误删了 /usr/include，
     # python3-dev 只补回其余头文件。编译 C 扩展前检测并恢复（幂等，存在则跳过）
     ls /usr/include/python3.*/pyconfig.h >/dev/null 2>&1 || apk fix python3 && \
-    git clone --depth 1 -b v2.4.0 https://github.com/lexiforest/curl-impersonate /curl-impersonate && \
+    # 按 commit 浅拉取（--depth 1 无法直接 checkout 任意 SHA，需先 fetch 该对象）
+    git init -q /curl-impersonate && \
     cd /curl-impersonate && \
+    git remote add origin ${GIT_DOMAIN}/lexiforest/curl-impersonate && \
+    git fetch --depth 1 origin ${CURL_IMPERSONATE_REF} && \
+    git checkout -q FETCH_HEAD && \
     ASM_FLAG="-DDISABLE_BORINGSSL_ASM=OFF" && \
     { [ "$TARGETARCH" != "arm" ] || [ "$TARGETVARIANT" != "v6" ]; } || ASM_FLAG="-DDISABLE_BORINGSSL_ASM=ON" && \
     CMAKE_ARGS="-DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib $ASM_FLAG -DCURL_CA_PATH=/etc/ssl/certs -DCURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt" && \
