@@ -16,10 +16,14 @@ ENV NGHTTP3_VERSION=1.18.0
 # pycurl 版本：固定默认值以保证可复现，需要其它版本时用 --build-arg PYCURL_VERSION=x.y.z
 ARG PYCURL_VERSION=7.48.0
 
-# 本地构建加速（CI 在海外无需配置）：APK_MIRROR 例 https://mirrors.tuna.tsinghua.edu.cn，
-# PIP_MIRROR 例 https://pypi.tuna.tsinghua.edu.cn/simple（与 ddddocr-docker 保持一致）
+# 本地构建加速（CI 在海外无需配置）：
+#   APK_MIRROR  例 https://mirrors.tuna.tsinghua.edu.cn
+#   PIP_MIRROR  例 https://pypi.tuna.tsinghua.edu.cn/simple
+#   GIT_DOMAIN  源码 clone 用的 GitHub 前缀，例 https://gh-proxy.com/https://github.com
+#               （openssl / nghttp3 / ngtcp2 / curl-impersonate 都从这里拉）
 ARG APK_MIRROR=""
 ARG PIP_MIRROR=""
+ARG GIT_DOMAIN="https://github.com"
 # buildx 自动注入；OpenSSL 的配置目标由它显式决定（见下）
 ARG TARGETARCH
 
@@ -55,7 +59,7 @@ RUN { [ -z "$APK_MIRROR" ] || sed -i "s|https://dl-cdn.alpinelinux.org|$APK_MIRR
     wget https://curl.se/download/curl-$CURL_VERSION.tar.bz2 && \
     tar xjf curl-$CURL_VERSION.tar.bz2 && \
     rm curl-$CURL_VERSION.tar.bz2 && \
-    git clone --depth 1 -b openssl-$SSL_VERSION https://github.com/openssl/openssl && \
+    git clone --depth 1 -b openssl-$SSL_VERSION ${GIT_DOMAIN}/openssl/openssl && \
     cd openssl && \
     # openssldir 必须与 Alpine 一致（/etc/ssl）：本构建会替换 /usr/lib/libssl.so.3、
     # libcrypto.so.3，apk-tools 等系统组件依赖 libcrypto 的默认 CA 路径做证书校验，
@@ -65,7 +69,7 @@ RUN { [ -z "$APK_MIRROR" ] || sed -i "s|https://dl-cdn.alpinelinux.org|$APK_MIRR
     make install_sw && \
     cd .. && \
     rm -rf openssl && \
-    git clone --depth 1 -b v$NGHTTP3_VERSION https://github.com/ngtcp2/nghttp3 && \
+    git clone --depth 1 -b v$NGHTTP3_VERSION ${GIT_DOMAIN}/ngtcp2/nghttp3 && \
     cd nghttp3 && \
     git submodule update --init && \
     autoreconf -fi && \
@@ -74,7 +78,7 @@ RUN { [ -z "$APK_MIRROR" ] || sed -i "s|https://dl-cdn.alpinelinux.org|$APK_MIRR
     make install && \
     cd .. && \
     rm -rf nghttp3 && \
-    git clone --depth 1 -b v$NGTCP2_VERSION https://github.com/ngtcp2/ngtcp2 && \
+    git clone --depth 1 -b v$NGTCP2_VERSION ${GIT_DOMAIN}/ngtcp2/ngtcp2 && \
     cd ngtcp2 && \
     git submodule update --init && \
     autoreconf -fi && \

@@ -46,8 +46,8 @@ FROM a76yyyy/pycurl:latest
 |---|---|---|---|---|
 | 基础镜像 | `a76yyyy/ddddocr:latest` | `a76yyyy/ddddocr:latest` | `alpine:3.24` | `alpine:3.24` |
 | Python | 3.14 | 3.14 | 3.14 | 3.14 |
-| curl | 8.23.0（自编） | curl-impersonate 2.4.0（基于 curl 8.23.0） | 8.23.0（自编） | curl-impersonate 2.4.0 |
-| TLS 库 | OpenSSL 3.5.9 LTS（自编） | BoringSSL（由 curl-impersonate v2.4.0 决定） | OpenSSL 3.5.9 LTS（Alpine 包） | BoringSSL |
+| curl | 8.23.0（自编） | curl-impersonate（固定 commit `df38987`，基于 curl 8.23.0） | 8.23.0（自编） | 同 ja3-latest |
+| TLS 库 | OpenSSL 3.5.9 LTS（自编） | BoringSSL（随 curl-impersonate 的固定 commit） | OpenSSL 3.5.9 LTS（Alpine 包） | BoringSSL |
 | HTTP/3 后端 | ngtcp2 1.25.0 + nghttp3 1.18.0 | ngtcp2 + BoringSSL | 同 latest | ngtcp2 + BoringSSL |
 | pycurl | 7.48.0（`PYCURL_VERSION` 可覆盖） | 7.48.0 + `patches/pycurl-impersonate.patch` | 7.48.0（`PYCURL_VERSION` 可覆盖） | 同 ja3-latest |
 | OCR | ddddocr 1.6.1 + onnxruntime 1.24.4 | 同 latest | 无 | 无 |
@@ -57,8 +57,8 @@ OpenSSL 3.5 是 LTS（支持至 2030-04），原生提供 QUIC API，ngtcp2 v1.1
 
 ## TLS 指纹伪装（ja3-latest）
 
-基于 [lexiforest/curl-impersonate](https://github.com/lexiforest/curl-impersonate) v2.4.0
-的 superbuild，浏览器指纹覆盖 Chrome 151/152、Safari 27、Firefox 153–155（含 ECH、ZSTD、
+基于 [lexiforest/curl-impersonate](https://github.com/lexiforest/curl-impersonate) 的 superbuild
+（固定 commit `df38987`，构建脚本里的 `CURL_IMPERSONATE_REF` 可覆盖），浏览器指纹覆盖 Chrome 151/152、Safari 27、Firefox 153–155（含 ECH、ZSTD、
 PQC 与 HTTP/3 指纹）。
 
 命令行：镜像内的 `curl` 默认以 chrome152 发起请求，也可显式指定目标或使用其它包装脚本。
@@ -168,17 +168,24 @@ LDFLAGS="-Wl,-rpath,/usr/lib" ./configure \
 pycurl 版本由 `PYCURL_VERSION` 构建参数固定（默认 7.48.0），三条线一致；需要其它版本时
 `--build-arg PYCURL_VERSION=x.y.z`，与 `APK_MIRROR` / `PIP_MIRROR` 一起传入即可。
 
-本地构建可加速，`APK_MIRROR` / `PIP_MIRROR` 默认空即与 CI 行为一致：
+本地构建可加速，三个参数都是空或默认值时与 CI 行为一致：
+
+| 参数 | 作用 | 国内构建时的示例 |
+|---|---|---|
+| `APK_MIRROR` | apk 包源 | `https://mirrors.tuna.tsinghua.edu.cn` |
+| `PIP_MIRROR` | pip 索引（pycurl sdist 也走它） | `https://pypi.tuna.tsinghua.edu.cn/simple` |
+| `GIT_DOMAIN` | 源码 clone 的 GitHub 前缀，覆盖 openssl / nghttp3 / ngtcp2 / curl-impersonate | `https://gh-proxy.com/https://github.com` |
 
 ```bash
 docker buildx build --platform linux/ppc64le \
   --build-arg APK_MIRROR=https://mirrors.tuna.tsinghua.edu.cn \
   --build-arg PIP_MIRROR=https://pypi.tuna.tsinghua.edu.cn/simple \
+  --build-arg GIT_DOMAIN=https://gh-proxy.com/https://github.com \
   -f Dockerfile -t pycurl:test . --load
 ```
 
-国内或 QEMU 多架构构建时建议启用，ppc64le 的 apk 阶段可从约 50 分钟降到 2 分钟以内。
-两个参数只影响 apk 与 pip；curl-impersonate 源码与 pycurl sdist 仍直连 GitHub 与 PyPI。
+官方 apk 源在国内约 40 KB/s、清华源约 2 MB/s，差距 50 倍——ppc64le 的 apk 阶段因此可从
+约 50 分钟降到 2 分钟以内。镜像源再快也救不了 GitHub 直连慢的情况，那要用 `GIT_DOMAIN`。
 
 ---
 
