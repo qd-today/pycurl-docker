@@ -13,6 +13,8 @@ ENV SSL_VERSION=3.5.9
 ENV CURL_VERSION=8.23.0
 ENV NGTCP2_VERSION=1.25.0
 ENV NGHTTP3_VERSION=1.18.0
+# pycurl 版本：固定默认值以保证可复现，需要其它版本时用 --build-arg PYCURL_VERSION=x.y.z
+ARG PYCURL_VERSION=7.48.0
 
 # 本地构建加速（CI 在海外无需配置）：APK_MIRROR 例 https://mirrors.tuna.tsinghua.edu.cn，
 # PIP_MIRROR 例 https://pypi.tuna.tsinghua.edu.cn/simple（与 ddddocr-docker 保持一致）
@@ -101,7 +103,7 @@ RUN { [ -z "$APK_MIRROR" ] || sed -i "s|https://dl-cdn.alpinelinux.org|$APK_MIRR
     make install && \
     cd .. && \
     rm -rf ./curl-$CURL_VERSION && \
-    pip install --no-cache-dir --compile --break-system-packages pycurl && \
+    pip install --no-cache-dir --compile --break-system-packages "pycurl==${PYCURL_VERSION}" && \
     # 构建期自检：HTTP3 特性在位 + pycurl 可 import（编译/链接问题在此暴露，不留到运行时）
     curl --version | grep -q HTTP3 && \
     python3 -c "import pycurl" && \

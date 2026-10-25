@@ -22,6 +22,8 @@ ENV PYCURL_CURL_CONFIG=/usr/bin/curl-impersonate-config
 # 平台相关参数（buildx 自动注入；armv6 无 NEON，BoringSSL 汇编不可用，需禁用 asm——不影响 TLS 指纹）
 ARG TARGETARCH
 ARG TARGETVARIANT
+# pycurl 版本：固定默认值以保证可复现，需要其它版本时用 --build-arg PYCURL_VERSION=x.y.z
+ARG PYCURL_VERSION=7.48.0
 
 # 本地构建加速（CI 在海外无需配置）：APK_MIRROR 例 https://mirrors.tuna.tsinghua.edu.cn，
 # PIP_MIRROR 例 https://pypi.tuna.tsinghua.edu.cn/simple（与 ddddocr-docker 保持一致）
@@ -52,13 +54,13 @@ RUN { [ -z "$APK_MIRROR" ] || sed -i "s|https://dl-cdn.alpinelinux.org|$APK_MIRR
     make build BUILD_DIR=build JOBS=$(nproc) CMAKE_CONFIGURE_ARGS="$CMAKE_ARGS" && \
     make checkbuild BUILD_DIR=build && \
     make install-strip BUILD_DIR=build JOBS=$(nproc) CMAKE_CONFIGURE_ARGS="$CMAKE_ARGS" && \
-    # pycurl 官方 7.48.0 sdist（含构建期生成的 src/docstrings.c，GitHub tag tarball 没有，
+    # pycurl 官方 sdist（含构建期生成的 src/docstrings.c，GitHub tag tarball 没有，
     # 直接从 git 源码编译会因缺文件失败）+ 本地补丁。注意 pip download 也会为解析 sdist
     # 元数据而执行 setup.py，故 PYCURL_CURL_CONFIG 走上面的 ENV，两个 pip 命令都看得到；
     # openssl-dir 仅编译期需要，指向 superbuild 的依赖 staging 目录（含 BoringSSL 头文件与静态库）
-    pip download --no-cache-dir --no-deps --no-binary :all: -d /tmp/pycurl-dl pycurl==7.48.0 && \
-    tar xzf /tmp/pycurl-dl/pycurl-7.48.0.tar.gz -C /tmp && \
-    mv /tmp/pycurl-7.48.0 /tmp/pycurl && \
+    pip download --no-cache-dir --no-deps --no-binary :all: -d /tmp/pycurl-dl "pycurl==${PYCURL_VERSION}" && \
+    tar xzf "/tmp/pycurl-dl/pycurl-${PYCURL_VERSION}.tar.gz" -C /tmp && \
+    mv "/tmp/pycurl-${PYCURL_VERSION}" /tmp/pycurl && \
     patch -d /tmp/pycurl -p1 < /tmp/pycurl-impersonate.patch && \
     PYCURL_OPENSSL_DIR=/curl-impersonate/build/deps/install \
     LDFLAGS="-Wl,-rpath,/usr/lib" \

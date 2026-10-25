@@ -1,4 +1,4 @@
-# pycurl
+# pycurl Docker 镜像（Alpine）
 
 基于 Alpine 的 pycurl 镜像。同一仓库三条发布线，按需选择：
 
@@ -48,10 +48,8 @@ FROM a76yyyy/pycurl:latest
 | curl | 8.23.0（自编） | curl-impersonate 2.4.0（基于 curl 8.23.0） | 8.23.0（自编） |
 | TLS 库 | OpenSSL 3.5.9 LTS（自编） | BoringSSL（版本由 curl-impersonate v2.4.0 决定） | OpenSSL 3.5.9 LTS（Alpine 包） |
 | HTTP/3 后端 | ngtcp2 1.25.0 + nghttp3 1.18.0 | ngtcp2 + BoringSSL | 同 latest |
-| pycurl | 7.48.0（pip 最新，未固定版本） | 7.48.0（固定）+ `patches/pycurl-impersonate.patch` | 7.48.0（pip 最新，未固定版本） |
+| pycurl | 7.48.0（`PYCURL_VERSION` 可覆盖） | 7.48.0 + `patches/pycurl-impersonate.patch` | 7.48.0（`PYCURL_VERSION` 可覆盖） |
 | OCR | ddddocr 1.6.1 + onnxruntime 1.24.4 | 同 latest | 无 |
-
-> `latest` 与 `lite` 的 pycurl 由 `pip install pycurl` 取 PyPI 最新版，未固定版本号，因此这两条线的构建结果不完全可复现；`ja3` 线固定在 7.48.0。
 
 OpenSSL 3.5 是 LTS（支持至 2030-04），原生提供 QUIC API，ngtcp2 v1.12.0 起可直接对接，
 因此不需要已停止维护的 quictls fork。
@@ -160,7 +158,10 @@ LDFLAGS="-Wl,-rpath,/usr/lib" ./configure \
 
 `ja3` 线的 curl 由 curl-impersonate 的 superbuild 产出，配置由上游决定。
 
-本地构建可加速，两个参数默认空即与 CI 行为一致：
+pycurl 版本由 `PYCURL_VERSION` 构建参数固定（默认 7.48.0），三条线一致；需要其它版本时
+`--build-arg PYCURL_VERSION=x.y.z`，与 `APK_MIRROR` / `PIP_MIRROR` 一起传入即可。
+
+本地构建可加速，`APK_MIRROR` / `PIP_MIRROR` 默认空即与 CI 行为一致：
 
 ```bash
 docker buildx build --platform linux/ppc64le \
