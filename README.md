@@ -131,8 +131,11 @@ riscv64 / pnacl / wasm / asmjs / myriad2，因此：
 | `<版本>`、`ja3-<版本>`、`lite-<版本>`、`ja3-lite-<版本>` | 版本号标签，与仓库发布版本对齐，例如 `1.5.0` 与 `ja3-lite-1.5.0` |
 
 发布由 tag 推送触发，四条线各自构建全平台并合并 manifest；日常验证走 workflow_dispatch，
-默认不推送任何镜像。dispatch 时若改动只涉及文档、或该 commit 已经验证过，CI 会直接跳过
-构建（`force` 可强制重跑）。
+默认不推送任何镜像。
+
+dispatch 时只重建受影响的变体：改动落在某个 Dockerfile 上就只重建对应那条线（派生文件
+跟着基准走，例如改 `Dockerfile.ja3` 会同时重建 ja3 与 ja3-lite）；改 `patches/`、`tests/`
+或 `_image.yml` 会重建全部；只改文档、或该 commit 已验证过则整体跳过。`force` 可强制重跑。
 
 ## 构建
 

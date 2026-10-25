@@ -38,3 +38,5 @@ jobs:
       push: ${{ github.event.inputs.push == 'true' }}
       native_arm: ${{ github.event.inputs.native_arm != 'false' }}
       pycurl_version: ${{ github.event.inputs.pycurl_version || '' }}
+      # 与 Dockerfile.ja3 的差异只允许在 FROM 行（CI 会校验）
+      mirror_of: Dockerfile.ja3

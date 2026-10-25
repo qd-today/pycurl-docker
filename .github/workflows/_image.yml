@@ -53,6 +53,10 @@ on:
         description: 'loong64 架构组使用的 Dockerfile（留空 = 与 dockerfile 相同）'
         type: string
         default: ''
+      mirror_of:
+        description: '本变体的 Dockerfile 派生自哪个文件（留空 = 不校验；设置后要求两者仅 FROM 不同）'
+        type: string
+        default: ''
       pycurl_version:
         description: '覆盖 Dockerfile 中的 PYCURL_VERSION（留空 = 用 Dockerfile 默认值）'
         type: string
@@ -96,6 +100,10 @@ jobs:
         # 改了 CI 就应该重新验证一次）
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DOCKERFILE: ${{ inputs.dockerfile }}
+          LOONG64: ${{ inputs.loong64_dockerfile }}
+          MIRROR: ${{ inputs.mirror_of }}
+          WORKFLOW_NAME: ${{ github.workflow }}
         run: |
           set -euo pipefail
           case "${{ github.event_name }}" in
@@ -117,19 +125,48 @@ jobs:
             echo "skip=true" >> "$GITHUB_OUTPUT"; echo "reason=already-verified"; exit 0
           fi
           echo "$changed" | sed 's/^/  /'
-          if echo "$changed" | grep -qE '^(Dockerfile|patches/|tests/|\.github/workflows/)'; then
-            echo "skip=false" >> "$GITHUB_OUTPUT"; echo "reason=image-inputs-changed"
+          # 只有与本变体相关的改动才需要重建：
+          #   共享 —— patches/、tests/、_image.yml 自身
+          #   本变体 —— 它的 Dockerfile、loong64 专用 Dockerfile、派生基准、自己的调用方 workflow
+          # 因此改 Dockerfile.ja3 只会重建 ja3 与 ja3-lite（后者派生自它），不连带 main / lite
+          relevant=0
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            case "$f" in
+              patches/*|tests/*|.github/workflows/_image.yml|".github/workflows/${WORKFLOW_NAME}.yml")
+                relevant=1 ;;
+              "$DOCKERFILE")
+                relevant=1 ;;
+              ${LOONG64:+"$LOONG64"})
+                relevant=1 ;;
+              ${MIRROR:+"$MIRROR"})
+                relevant=1 ;;
+            esac
+          done <<EOF
+          $changed
+          EOF
+          if [ "$relevant" = "1" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"; echo "reason=variant-inputs-changed"
           else
-            echo "skip=true" >> "$GITHUB_OUTPUT"; echo "reason=docs-only"
+            echo "skip=true" >> "$GITHUB_OUTPUT"; echo "reason=unrelated-to-this-variant"
           fi
-      - name: Verify loong64 Dockerfile only differs in FROM
-        # loong64 基座（ghcr.io/loong64/alpine）与官方 alpine 的差异只应出现在 FROM 行；
-        # 出现其它差异说明两份文件已漂移，构建出来的 loong64 镜像会与其它架构不同源
-        if: inputs.loong64_dockerfile != ''
+      - name: Verify derived Dockerfile only differs in FROM
+        # 派生 Dockerfile（loong64 的龙芯基座、ja3-lite 的纯 alpine 基座）只应改 FROM 行；
+        # 出现其它差异说明两份文件已漂移，会构建出与基准不同源的镜像
+        if: inputs.loong64_dockerfile != '' || inputs.mirror_of != ''
         run: |
-          diff -u             <(sed 's|^FROM .*|FROM <base>|' "${{ inputs.dockerfile }}") \
-            <(sed 's|^FROM .*|FROM <base>|' "${{ inputs.loong64_dockerfile }}") \
-            || { echo "::error::${{ inputs.loong64_dockerfile }} 与 ${{ inputs.dockerfile }} 除 FROM 外不一致"; exit 1; }
+          set -eu
+          check() {  # $1=派生文件 $2=基准文件
+            a=$(sed 's|^FROM .*|FROM <base>|' "$1")
+            b=$(sed 's|^FROM .*|FROM <base>|' "$2")
+            if [ "$a" != "$b" ]; then
+              echo "::error::$1 与 $2 除 FROM 外不一致（派生文件已漂移）"
+              diff -u <(printf '%s\n' "$b") <(printf '%s\n' "$a") || true
+              exit 1
+            fi
+          }
+          [ -z "${{ inputs.loong64_dockerfile }}" ] || check "${{ inputs.loong64_dockerfile }}" "${{ inputs.dockerfile }}"
+          [ -z "${{ inputs.mirror_of }}" ] || check "${{ inputs.dockerfile }}" "${{ inputs.mirror_of }}"
       - name: Compute matrices
         id: plan
         env:
