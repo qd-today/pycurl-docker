@@ -180,8 +180,9 @@ jobs:
           context: .
           file: ./${{ inputs.dockerfile }}
           platforms: ${{ matrix.platforms }}
-          # 发布模式按 digest 推送：不产生任何中间 tag（Docker Hub 没有删 tag 的 API，
-          # 用 staging tag 会永久污染 tag 列表），由 publish 阶段合并成正式多架构 tag
+          # 发布模式按 digest 推送：各架构组并行构建，用 digest 传递产物不必协调 tag 命名，
+          # 也不在 tag 列表里留下对使用者无意义、却可被拉取的中间产物。
+          # （Hub API 支持删除 tag——需要一次带凭据的调用；不产 tag 就连清理都不需要。）
           push: ${{ env.PUBLISH == 'true' }}
           outputs: ${{ env.PUBLISH == 'true' && format('type=image,name={0},push-by-digest=true,name-canonical=true', 'docker.io/a76yyyy/pycurl') || '' }}
           # 保持与旧版行为一致：不产出 attestation 清单（旧 Docker 客户端兼容性）
