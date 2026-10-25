@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 jobs:
   dockerHubDescription:
-    if: startsWith(github.repository, 'qiandao-today/pycurl-docker')
+    if: github.repository == 'qd-today/pycurl-docker'
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
