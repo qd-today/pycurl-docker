@@ -6,87 +6,37 @@ on:
   workflow_dispatch:
     inputs:
       push:
-        description: '构建完成后推送到 Docker Hub（不勾选则仅完整构建验证，不发布任何镜像）'
+        description: '构建并通过冒烟测试后推送到 Docker Hub（不勾选则只构建+冒烟验证，不发布任何镜像）'
         type: boolean
         default: false
       platforms:
-        description: '要构建的平台列表，逗号分隔不要空格，如 linux/arm64,linux/amd64；留空=默认五平台'
+        description: '要构建的平台列表，逗号分隔不要空格，如 linux/amd64,linux/arm64；留空=该变体默认平台。子集构建禁止发布'
+        type: string
+        default: ''
+      native_arm:
+        description: '用 GitHub 原生 arm64 runner 构建 arm64（比 QEMU 快 3-5 倍）；该 runner 不可用时取消勾选回退 QEMU'
+        type: boolean
+        default: true
+      pycurl_version:
+        description: '指定 pycurl 版本（留空 = Dockerfile 默认值 7.48.0）'
         type: string
         default: ''
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    name: Build image job
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      # 五平台含 386/arm/v6/arm/v7，runner 仅 amd64 本机，必须注册 QEMU 二进制翻译，
-      # 否则非本机平台的 RUN 步骤直接 exec format error
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      # 纯验证构建（dispatch 不勾 push）时登录失败不应阻塞构建，故 continue-on-error；
-      # 登录失败时 metadata 的 enable 条件为假、不产出 tag，build-push-action 只构建不推送
-      # id 是必需的：下方 metadata 用 steps.login-dockerhub.outcome 判定是否启用镜像名，
-      # 缺 id 会求值成空 -> 镜像名被禁用 -> tag 列表为空 -> tag 发布时报 "tag is needed"
-      - name: Login to Docker Hub
-        id: login-dockerhub
-        uses: docker/login-action@v3
-        continue-on-error: true
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-      - name: Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: a76yyyy/pycurl,enable=${{ steps.login-dockerhub.outcome == 'success' }}
-          # 关闭 semver 等模式的自动 latest，只保留下面显式声明的标签，
-          # 避免自动 latest 覆盖版本标签（参见 ddddocr 项目的教训）
-          flavor: |
-            latest=false
-          tags: |
-            type=raw,value=lite-latest
-            # 版本 tag 只在 tag 事件产出；dispatch 时 ref_name 是分支名，推出去会污染 Hub
-            type=raw,value=lite-${{ github.ref_name }},enable=${{ startsWith(github.ref, 'refs/tags/') }}
-      - name: Build and publish image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile.lite
-          # dispatch 可指定平台子集做快速验证；留空与 tag 发布时均为默认八平台
-          # （alpine:3.24 官方镜像覆盖全部八个；loong64 官方无此变体，未纳入）
-          platforms: ${{ github.event.inputs.platforms || 'linux/386,linux/arm64,linux/amd64,linux/arm/v6,linux/arm/v7,linux/ppc64le,linux/riscv64,linux/s390x' }}
-          # tag 推送 = 发布；dispatch 按 push 输入决定（默认 false = 仅验证构建）
-          push: ${{ github.event.inputs.push == 'true' || startsWith(github.ref, 'refs/tags/') }}
-          tags: ${{ steps.meta.outputs.tags }}
-          # 不产出 attestation 清单，保持与旧版行为一致（旧 Docker 客户端兼容性）
-          provenance: false
-  # 冒烟测试 job：与 build 并行（不 needs），单平台 amd64 --load 到本地 docker 后运行
-  # tests/ 脚本。两者独立信号——构建失败与运行时失败分别可见，互不遮蔽
-  smoke-test:
-    runs-on: ubuntu-latest
-    name: Smoke test job (linux/amd64)
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Build test image (linux/amd64, load to local docker)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile.lite
-          platforms: linux/amd64
-          load: true
-          push: false
-          tags: pycurl-smoke:test
-          provenance: false
-      # 脚本经 stdin 喂给容器（sh -s），无需 bind mount，任何环境可用
-      - name: Run smoke tests
-        run: docker run --rm -i pycurl-smoke:test sh -s < tests/smoke-lite.sh
+  image:
+    # 三个变体共用 .github/workflows/_image.yml：plan -> build(架构组矩阵) -> smoke(每平台一个 job) -> publish
+    # 变体差异全部通过 with 传入，避免三份 workflow 重复维护
+    uses: ./.github/workflows/_image.yml
+    secrets: inherit
+    with:
+      variant: lite
+      dockerfile: Dockerfile.lite
+      latest_tag: lite-latest
+      version_prefix: 'lite-'
+      smoke_role: lite
+      default_platforms: linux/386,linux/arm64,linux/amd64,linux/arm/v6,linux/arm/v7,linux/ppc64le,linux/riscv64,linux/s390x,linux/loong64
+      # 官方 alpine 无 loong64 变体，该架构改用龙芯社区基座（仅 FROM 不同）
+      loong64_dockerfile: Dockerfile.lite.loong64
+      platforms: ${{ github.event.inputs.platforms || '' }}
+      push: ${{ github.event.inputs.push == 'true' }}
+      native_arm: ${{ github.event.inputs.native_arm != 'false' }}
+      pycurl_version: ${{ github.event.inputs.pycurl_version || '' }}

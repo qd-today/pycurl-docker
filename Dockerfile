@@ -16,10 +16,16 @@ ENV NGHTTP3_VERSION=1.18.0
 # pycurl 版本：固定默认值以保证可复现，需要其它版本时用 --build-arg PYCURL_VERSION=x.y.z
 ARG PYCURL_VERSION=7.48.0
 
-# 本地构建加速（CI 在海外无需配置）：APK_MIRROR 例 https://mirrors.tuna.tsinghua.edu.cn，
-# PIP_MIRROR 例 https://pypi.tuna.tsinghua.edu.cn/simple（与 ddddocr-docker 保持一致）
+# 本地构建加速（CI 在海外无需配置）：
+#   APK_MIRROR  例 https://mirrors.tuna.tsinghua.edu.cn
+#   PIP_MIRROR  例 https://pypi.tuna.tsinghua.edu.cn/simple
+#   GIT_DOMAIN  源码 clone 用的 GitHub 前缀，例 https://gh-proxy.com/https://github.com
+#               （openssl / nghttp3 / ngtcp2 / curl-impersonate 都从这里拉）
 ARG APK_MIRROR=""
 ARG PIP_MIRROR=""
+ARG GIT_DOMAIN="https://github.com"
+# buildx 自动注入；OpenSSL 的配置目标由它显式决定（见下）
+ARG TARGETARCH
 
 # Install packages & Install openssl nghttp3 ngtcp2 curl & Pip install pycurl
 RUN { [ -z "$APK_MIRROR" ] || sed -i "s|https://dl-cdn.alpinelinux.org|$APK_MIRROR|g" /etc/apk/repositories; } && \
@@ -34,21 +40,36 @@ RUN { [ -z "$APK_MIRROR" ] || sed -i "s|https://dl-cdn.alpinelinux.org|$APK_MIRR
     # python3-dev 只补回其余头文件。编译 C 扩展前检测并恢复（幂等，存在则跳过）
     ls /usr/include/python3.*/pyconfig.h >/dev/null 2>&1 || apk fix python3 && \
     file /bin/busybox && \
-    [[ $(getconf LONG_BIT) = "32" && -z $(file /bin/busybox | grep -i "arm") ]] && configtmp="setarch i386 ./config -m32" || configtmp="./config" && \
+    # OpenSSL 目标必须显式指定，不能靠 ./config 的 uname 自动探测：
+    # 在 GitHub 原生 arm64 runner 上，32 位 ARM（armv6/armv7）容器由内核 compat 模式
+    # 直接跑、不经 QEMU，uname -m 返回 aarch64 -> ./config 选中 linux-aarch64 ->
+    # 拿 arm32 汇编器去编 md5-aarch64.S，报 bad instruction `ldp ...`（实测踩过）。
+    # 显式映射后与宿主架构彻底解耦；linux-x86 目标自带 -m32，无需再 setarch/-m32。
+    case "${TARGETARCH}" in \
+        amd64)   openssl_target=linux-x86_64 ;; \
+        arm64)   openssl_target=linux-aarch64 ;; \
+        arm)     openssl_target=linux-armv4 ;; \
+        386)     openssl_target=linux-x86 ;; \
+        ppc64le) openssl_target=linux-ppc64le ;; \
+        riscv64) openssl_target=linux64-riscv64 ;; \
+        s390x)   openssl_target=linux64-s390x ;; \
+        loong64) openssl_target=linux64-loongarch64 ;; \
+        *) echo "不支持的 TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac && \
     wget https://curl.se/download/curl-$CURL_VERSION.tar.bz2 && \
     tar xjf curl-$CURL_VERSION.tar.bz2 && \
     rm curl-$CURL_VERSION.tar.bz2 && \
-    git clone --depth 1 -b openssl-$SSL_VERSION https://github.com/openssl/openssl && \
+    git clone --depth 1 -b openssl-$SSL_VERSION ${GIT_DOMAIN}/openssl/openssl && \
     cd openssl && \
     # openssldir 必须与 Alpine 一致（/etc/ssl）：本构建会替换 /usr/lib/libssl.so.3、
     # libcrypto.so.3，apk-tools 等系统组件依赖 libcrypto 的默认 CA 路径做证书校验，
     # 用默认值（/usr/ssl）会导致系统级 TLS 校验失败
-    $configtmp --prefix=/usr --libdir=lib --openssldir=/etc/ssl && \
+    ./Configure "$openssl_target" --prefix=/usr --libdir=lib --openssldir=/etc/ssl && \
     make -j$(($(grep -c ^processor /proc/cpuinfo) - 0)) && \
     make install_sw && \
     cd .. && \
     rm -rf openssl && \
-    git clone --depth 1 -b v$NGHTTP3_VERSION https://github.com/ngtcp2/nghttp3 && \
+    git clone --depth 1 -b v$NGHTTP3_VERSION ${GIT_DOMAIN}/ngtcp2/nghttp3 && \
     cd nghttp3 && \
     git submodule update --init && \
     autoreconf -fi && \
@@ -57,7 +78,7 @@ RUN { [ -z "$APK_MIRROR" ] || sed -i "s|https://dl-cdn.alpinelinux.org|$APK_MIRR
     make install && \
     cd .. && \
     rm -rf nghttp3 && \
-    git clone --depth 1 -b v$NGTCP2_VERSION https://github.com/ngtcp2/ngtcp2 && \
+    git clone --depth 1 -b v$NGTCP2_VERSION ${GIT_DOMAIN}/ngtcp2/ngtcp2 && \
     cd ngtcp2 && \
     git submodule update --init && \
     autoreconf -fi && \

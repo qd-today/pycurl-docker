@@ -1,0 +1,42 @@
+name: Build Ja3 Lite Image
+on:
+  push:
+    tags:
+      - '*'
+  workflow_dispatch:
+    inputs:
+      push:
+        description: '构建并通过冒烟测试后推送到 Docker Hub（不勾选则只构建+冒烟验证，不发布任何镜像）'
+        type: boolean
+        default: false
+      platforms:
+        description: '要构建的平台列表，逗号分隔不要空格，如 linux/amd64,linux/arm64；留空=该变体默认平台。子集构建禁止发布'
+        type: string
+        default: ''
+      native_arm:
+        description: '用 GitHub 原生 arm64 runner 构建 arm64（比 QEMU 快 3-5 倍）；该 runner 不可用时取消勾选回退 QEMU'
+        type: boolean
+        default: true
+      pycurl_version:
+        description: '指定 pycurl 版本（留空 = Dockerfile 默认值 7.48.0）'
+        type: string
+        default: ''
+jobs:
+  image:
+    # 三个变体共用 .github/workflows/_image.yml：plan -> build(架构组矩阵) -> smoke(每平台一个 job) -> publish
+    # 变体差异全部通过 with 传入，避免三份 workflow 重复维护
+    uses: ./.github/workflows/_image.yml
+    secrets: inherit
+    with:
+      variant: ja3-lite
+      dockerfile: Dockerfile.ja3.lite
+      latest_tag: ja3-lite-latest
+      version_prefix: 'ja3-lite-'
+      smoke_role: ja3
+      default_platforms: linux/386,linux/arm64,linux/amd64,linux/arm/v6,linux/arm/v7,linux/riscv64
+      platforms: ${{ github.event.inputs.platforms || '' }}
+      push: ${{ github.event.inputs.push == 'true' }}
+      native_arm: ${{ github.event.inputs.native_arm != 'false' }}
+      pycurl_version: ${{ github.event.inputs.pycurl_version || '' }}
+      # 与 Dockerfile.ja3 的差异只允许在 FROM 行（CI 会校验）
+      mirror_of: Dockerfile.ja3

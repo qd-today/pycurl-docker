@@ -1,0 +1,94 @@
+# 基础镜像（lite 版：纯 Alpine，不含 ddddocr/onnxruntime，体积最小）
+# 钉 3.24 稳定分支：与 ddddocr 基础镜像同分支、构建可复现；edge 是滚动分支，
+# 基座包（musl/python3/busybox）每日漂移，不适合需要可复现构建的场景
+FROM ghcr.io/loong64/alpine:3.24
+
+# 维护者信息
+LABEL maintainer "a76yyyy <q981331502@163.com>"
+LABEL org.opencontainers.image.source=https://github.com/qd-today/pycurl-docker
+
+# Envirenment for pycurl
+ENV PYCURL_SSL_LIBRARY=openssl
+# OpenSSL 3.5 为 LTS（支持至 2030-04），3.5.0+ 原生提供 QUIC API（libssl.so.3 含
+# OSSL_QUIC_client_method 等符号、openssl-dev 含 quic.h），ngtcp2 v1.12.0+ 可直接对接，
+# 无需再使用已废弃的 quictls fork（2025-04 abandoned）。
+# Alpine 3.24 仓库的 openssl 已追平 edge（同为 3.5.9-r0），故直接用原生 openssl-dev，
+# 不再源码编译：省一次全量编译，且与系统 CA 路径（/etc/ssl）天然一致
+ENV CURL_VERSION=8.23.0
+ENV NGTCP2_VERSION=1.25.0
+ENV NGHTTP3_VERSION=1.18.0
+# pycurl 版本：固定默认值以保证可复现，需要其它版本时用 --build-arg PYCURL_VERSION=x.y.z
+ARG PYCURL_VERSION=7.48.0
+
+# 本地构建加速（CI 在海外无需配置）：
+#   APK_MIRROR  例 https://mirrors.tuna.tsinghua.edu.cn
+#   PIP_MIRROR  例 https://pypi.tuna.tsinghua.edu.cn/simple
+#   GIT_DOMAIN  源码 clone 用的 GitHub 前缀，例 https://gh-proxy.com/https://github.com
+#               （openssl / nghttp3 / ngtcp2 / curl-impersonate 都从这里拉）
+ARG APK_MIRROR=""
+ARG PIP_MIRROR=""
+ARG GIT_DOMAIN="https://github.com"
+
+# Install packages & Install nghttp3 ngtcp2 curl & Pip install pycurl
+RUN { [ -z "$APK_MIRROR" ] || sed -i "s|https://dl-cdn.alpinelinux.org|$APK_MIRROR|g" /etc/apk/repositories; } && \
+    { [ -z "$PIP_MIRROR" ] || export PIP_INDEX_URL="$PIP_MIRROR"; } && \
+    apk update && \
+    apk add --update --no-cache git tzdata ca-certificates python3 && \
+    apk add --update --no-cache --virtual .build_deps nano openssh-client cmake make perl autoconf g++ automake linux-headers libtool util-linux \
+    libidn2-dev libgsasl-dev krb5-dev zstd-dev nghttp2-dev zlib-dev brotli-dev py3-pip py3-setuptools py3-wheel python3-dev c-ares-dev libpsl-dev \
+    openssl-dev && \
+    # Alpine 3.24 起 pyconfig.h 归 python3 包所有；编译 C 扩展前检测并恢复（幂等，存在则跳过）
+    ls /usr/include/python3.*/pyconfig.h >/dev/null 2>&1 || apk fix python3 && \
+    wget https://curl.se/download/curl-$CURL_VERSION.tar.bz2 && \
+    tar xjf curl-$CURL_VERSION.tar.bz2 && \
+    rm curl-$CURL_VERSION.tar.bz2 && \
+    git clone --depth 1 -b v$NGHTTP3_VERSION ${GIT_DOMAIN}/ngtcp2/nghttp3 && \
+    cd nghttp3 && \
+    git submodule update --init && \
+    autoreconf -fi && \
+    ./configure PKG_CONFIG_PATH=/usr/lib/pkgconfig LDFLAGS="-Wl,-rpath,/usr/lib" --prefix=/usr --libdir=/usr/lib --enable-lib-only && \
+    make -j$(($(grep -c ^processor /proc/cpuinfo) - 0)) && \
+    make install && \
+    cd .. && \
+    rm -rf nghttp3 && \
+    git clone --depth 1 -b v$NGTCP2_VERSION ${GIT_DOMAIN}/ngtcp2/ngtcp2 && \
+    cd ngtcp2 && \
+    git submodule update --init && \
+    autoreconf -fi && \
+    ./configure PKG_CONFIG_PATH=/usr/lib/pkgconfig LDFLAGS="-Wl,-rpath,/usr/lib" --prefix=/usr --libdir=/usr/lib --enable-lib-only --with-openssl && \
+    make -j$(($(grep -c ^processor /proc/cpuinfo) - 0)) && \
+    make install && \
+    cd .. && \
+    rm -rf ngtcp2 && \
+    cd curl-$CURL_VERSION && \
+    autoreconf -fi && \
+    LDFLAGS="-Wl,-rpath,/usr/lib" ./configure \
+        --with-openssl=/usr \
+        --with-nghttp2=/usr \
+        --with-nghttp3=/usr \
+        --with-ngtcp2=/usr \
+        --prefix=/usr \
+        --enable-ipv6 \
+        --enable-unix-sockets \
+        --with-libidn2 \
+        --disable-static \
+        --disable-ldap \
+        --with-pic \
+        --with-gssapi \
+        --enable-ares && \
+    make -j$(($(grep -c ^processor /proc/cpuinfo) - 0)) && \
+    make install && \
+    cd .. && \
+    rm -rf ./curl-$CURL_VERSION && \
+    pip install --no-cache-dir --compile --break-system-packages "pycurl==${PYCURL_VERSION}" && \
+    # 构建期自检：HTTP3 特性在位 + pycurl 可 import（编译/链接问题在此暴露，不留到运行时）
+    curl --version | grep -q HTTP3 && \
+    python3 -c "import pycurl" && \
+    apk del .build_deps && \
+    # 运行时补齐被 .build_deps 清除的动态依赖（不用 --update：索引已在 RUN 开头刷新过，
+    # 避免多余的索引拉取引入网络不确定性）。libssl3/libcrypto3：openssl-dev 随
+    # .build_deps 删除后运行期仍需（curl/pycurl 动态链接；libcrypto3 虽因 apk-tools
+    # 的依赖不会被删，显式列出以防万一）
+    apk add --no-cache libidn2 libgsasl zstd-libs zlib c-ares nghttp2 libpsl brotli-libs libssl3 libcrypto3 && \
+    rm -rf /var/cache/apk/* && \
+    rm -rf /usr/share/man/*
