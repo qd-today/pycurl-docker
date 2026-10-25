@@ -1,0 +1,84 @@
+# 构建 curl-impersonate（JA3/TLS 指纹伪装）
+# 基于 lexiforest/curl-impersonate v2.4.0 官方 superbuild：
+#   - curl 8.23.0，Chrome 151/152、Safari 27、Firefox 153-155 指纹（含 ECH/ZSTD/PQC/H3 指纹）
+#   - QUIC 后端为 ngtcp2 + BoringSSL（替代已停滞的 lwthiker 0.6.1 + cloudflare/quiche 方案）
+#   - 全部依赖按上游 pinned 版本静态编译，不依赖 Alpine 包版本（nghttp2 锁定 1.63.0，规避 1.65 移除 priority flag）
+#   - pycurl 使用官方 7.48.0 源码 + patches/pycurl-impersonate.patch：
+#     libcurl-impersonate 独有的 CURLOPT_IMPERSONATE（选项 10999）不在 pycurl 的
+#     setopt 类型表与常量表中，补丁补上后 pycurl 可直接 c.setopt(pycurl.IMPERSONATE, 'chrome152')
+#     （注意：BoringSSL 无 SSL_CTX_set_ciphersuites API，CURLOPT_TLS13_CIPHERS 在本构建
+#      恒返回 CURLE_NOT_BUILT_IN；TLS1.3 套件由 impersonate target 内部配置，无需手动设置）
+FROM alpine:3.24
+
+# 维护者信息
+LABEL maintainer "a76yyyy <q981331502@163.com>"
+LABEL org.opencontainers.image.source=https://github.com/qd-today/pycurl-docker
+
+# pycurl 编译期 SSL 后端声明（BoringSSL 与 OpenSSL API 兼容）
+ENV PYCURL_SSL_LIBRARY=openssl
+# curl-config 指向 impersonate 版：pip download 解析 sdist 元数据与 pip install 编译都会用到
+ENV PYCURL_CURL_CONFIG=/usr/bin/curl-impersonate-config
+
+# 平台相关参数（buildx 自动注入；armv6 无 NEON，BoringSSL 汇编不可用，需禁用 asm——不影响 TLS 指纹）
+ARG TARGETARCH
+ARG TARGETVARIANT
+# pycurl 版本：固定默认值以保证可复现，需要其它版本时用 --build-arg PYCURL_VERSION=x.y.z
+ARG PYCURL_VERSION=7.48.0
+
+# 本地构建加速（CI 在海外无需配置）：APK_MIRROR 例 https://mirrors.tuna.tsinghua.edu.cn，
+# PIP_MIRROR 例 https://pypi.tuna.tsinghua.edu.cn/simple（与 ddddocr-docker 保持一致）
+ARG APK_MIRROR=""
+ARG PIP_MIRROR=""
+
+# pycurl 源码补丁（为 pycurl 补上 CURLOPT_IMPERSONATE 选项支持）
+COPY patches/pycurl-impersonate.patch /tmp/pycurl-impersonate.patch
+
+# Install curl-impersonate & build patched pycurl
+RUN { [ -z "$APK_MIRROR" ] || sed -i "s|https://dl-cdn.alpinelinux.org|$APK_MIRROR|g" /etc/apk/repositories; } && \
+    { [ -z "$PIP_MIRROR" ] || export PIP_INDEX_URL="$PIP_MIRROR"; } && \
+    apk update && \
+    apk add --update --no-cache bash git tzdata ca-certificates python3 py3-six && \
+    apk add --update --no-cache --virtual .build_deps nano openssh-client \
+    cmake ninja make musl-dev perl autoconf g++ automake linux-headers libtool \
+    xz-libs xz-dev bzip2 unzip zip curl patch pkgconfig \
+    python3-dev py3-pip py3-setuptools py3-wheel && \
+    # Alpine 3.24 起 pyconfig.h 归 python3 包所有；基础镜像瘦身时误删了 /usr/include，
+    # python3-dev 只补回其余头文件。编译 C 扩展前检测并恢复（幂等，存在则跳过）
+    ls /usr/include/python3.*/pyconfig.h >/dev/null 2>&1 || apk fix python3 && \
+    git clone --depth 1 -b v2.4.0 https://github.com/lexiforest/curl-impersonate /curl-impersonate && \
+    cd /curl-impersonate && \
+    ASM_FLAG="-DDISABLE_BORINGSSL_ASM=OFF" && \
+    { [ "$TARGETARCH" != "arm" ] || [ "$TARGETVARIANT" != "v6" ]; } || ASM_FLAG="-DDISABLE_BORINGSSL_ASM=ON" && \
+    CMAKE_ARGS="-DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib $ASM_FLAG -DCURL_CA_PATH=/etc/ssl/certs -DCURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt" && \
+    make prepare-libidn2 BUILD_DIR=build JOBS=$(nproc) && \
+    make build BUILD_DIR=build JOBS=$(nproc) CMAKE_CONFIGURE_ARGS="$CMAKE_ARGS" && \
+    make checkbuild BUILD_DIR=build && \
+    make install-strip BUILD_DIR=build JOBS=$(nproc) CMAKE_CONFIGURE_ARGS="$CMAKE_ARGS" && \
+    # pycurl 官方 sdist（含构建期生成的 src/docstrings.c，GitHub tag tarball 没有，
+    # 直接从 git 源码编译会因缺文件失败）+ 本地补丁。注意 pip download 也会为解析 sdist
+    # 元数据而执行 setup.py，故 PYCURL_CURL_CONFIG 走上面的 ENV，两个 pip 命令都看得到；
+    # openssl-dir 仅编译期需要，指向 superbuild 的依赖 staging 目录（含 BoringSSL 头文件与静态库）
+    pip download --no-cache-dir --no-deps --no-binary :all: -d /tmp/pycurl-dl "pycurl==${PYCURL_VERSION}" && \
+    tar xzf "/tmp/pycurl-dl/pycurl-${PYCURL_VERSION}.tar.gz" -C /tmp && \
+    mv "/tmp/pycurl-${PYCURL_VERSION}" /tmp/pycurl && \
+    patch -d /tmp/pycurl -p1 < /tmp/pycurl-impersonate.patch && \
+    PYCURL_OPENSSL_DIR=/curl-impersonate/build/deps/install \
+    LDFLAGS="-Wl,-rpath,/usr/lib" \
+        pip install --no-cache-dir --compile --break-system-packages /tmp/pycurl && \
+    # 补丁生效校验：缺常量说明 patch 未应用，直接让构建失败
+    python3 -c "import pycurl; assert pycurl.IMPERSONATE, 'pycurl IMPERSONATE patch not applied'" && \
+    rm -rf /tmp/pycurl /tmp/pycurl-dl /tmp/pycurl-impersonate.patch && \
+    cd / && \
+    rm -rf /curl-impersonate && \
+    apk del .build_deps && \
+    apk add --no-cache ca-certificates libstdc++ && \
+    # 上游安装的私有静态库（.a）仅供静态链接使用，运行时纯属死重量，删除以控制镜像体积
+    rm -rf /usr/lib/curl-impersonate && \
+    rm -f /usr/lib/libcurl-impersonate.a && \
+    # 保持与旧版镜像的 CLI 兼容：curl 默认以 chrome152 指纹发起请求
+    # （须在 apk del 之后创建，否则会被 curl 包的删除操作清掉）
+    ln -fs /usr/bin/curl_chrome152 /usr/bin/curl && \
+    ln -fs /usr/bin/curl-impersonate-config /usr/bin/curl-config && \
+    rm -rf /root/.cache/pip && \
+    rm -rf /var/cache/apk/* && \
+    rm -rf /usr/share/man/*

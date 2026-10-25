@@ -1,6 +1,6 @@
 name: _Image (reusable)
 
-# 三个变体（main / ja3 / lite）共用的构建-冒烟-发布流水线。
+# 四个变体（main / ja3 / lite / ja3-lite）共用的构建-冒烟-发布流水线。
 # 变体差异全部由 inputs 表达，避免三份 workflow 各抄一遍逻辑后逐渐漂移
 # （此前就是三份独立 workflow：同一批 QEMU/dispatch/冒烟改动要改三次）。
 #
@@ -57,6 +57,10 @@ on:
         description: '覆盖 Dockerfile 中的 PYCURL_VERSION（留空 = 用 Dockerfile 默认值）'
         type: string
         default: ''
+      force:
+        description: '强制重新构建（默认会跳过「仅文档改动」或「该 commit 已验证过」的重复运行）'
+        type: boolean
+        default: false
     secrets:
       DOCKER_USERNAME:
         required: false
@@ -76,9 +80,48 @@ jobs:
       smoke_matrix: ${{ steps.plan.outputs.smoke_matrix }}
       expected: ${{ steps.plan.outputs.expected }}
       full: ${{ steps.plan.outputs.full }}
+      skip: ${{ steps.changes.outputs.skip }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Decide whether a rebuild is needed
+        id: changes
+        # 只在 workflow_dispatch 下生效：tag 推送是正式发布，必须全量构建。
+        # 两种情况跳过：
+        #   1) 同一 commit 已有该变体的成功运行（重复 dispatch）
+        #   2) 与上次成功运行相比，改动里没有任何影响镜像的路径（例如只改了 README）
+        # 影响镜像的路径：Dockerfile*、patches/、tests/、.github/workflows/（CI 自身也算，
+        # 改了 CI 就应该重新验证一次）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          case "${{ github.event_name }}" in
+            workflow_dispatch) ;;
+            *) echo "skip=false" >> "$GITHUB_OUTPUT"; echo "reason=release-event"; exit 0 ;;
+          esac
+          if [ "${{ inputs.force }}" = "true" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"; echo "reason=forced"; exit 0
+          fi
+          base=$(gh run list --workflow "${GITHUB_WORKFLOW}" --branch "${GITHUB_REF_NAME}" \
+                   --status success --limit 1 --json headSha --jq '.[0].headSha' 2>/dev/null || true)
+          if [ -z "$base" ] || [ "$base" = "null" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"; echo "reason=no-previous-success"; exit 0
+          fi
+          changed=$(git diff --name-only "$base" "$GITHUB_SHA" || true)
+          echo "基准 ${base}..${GITHUB_SHA} 的改动："
+          if [ -z "$changed" ]; then
+            echo "  （无改动，该 commit 已验证过）"
+            echo "skip=true" >> "$GITHUB_OUTPUT"; echo "reason=already-verified"; exit 0
+          fi
+          echo "$changed" | sed 's/^/  /'
+          if echo "$changed" | grep -qE '^(Dockerfile|patches/|tests/|\.github/workflows/)'; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"; echo "reason=image-inputs-changed"
+          else
+            echo "skip=true" >> "$GITHUB_OUTPUT"; echo "reason=docs-only"
+          fi
       - name: Verify loong64 Dockerfile only differs in FROM
         # loong64 基座（ghcr.io/loong64/alpine）与官方 alpine 的差异只应出现在 FROM 行；
         # 出现其它差异说明两份文件已漂移，构建出来的 loong64 镜像会与其它架构不同源
@@ -153,12 +196,14 @@ jobs:
               "linux/ppc64le": "ppc64le", "linux/s390x": "ppc64le",
               "linux/riscv64": "riscv64", "linux/loong64": "loong64",
           }
+          # 只有基座是 ddddocr 的变体才带 OCR；lite 与 ja3-lite 都是纯 alpine 基座
+          OCR_VARIANTS = {"main", "ja3"}
           smoke = []
           for p in plats:
               smoke.append({
                   "platform": p,
                   "group": GROUP_OF[p],
-                  "ocr": "ocr" if (p in OCR_STACK and variant != "lite") else "nocr",
+                  "ocr": "ocr" if (p in OCR_STACK and variant in OCR_VARIANTS) else "nocr",
                   "runner": arm_runner if p == "linux/arm64" else "ubuntu-latest",
                   "file": file_of(GROUP_OF[p]),
               })
@@ -179,6 +224,8 @@ jobs:
   build:
     needs: plan
     name: Build ${{ matrix.group }} (${{ matrix.platforms }})
+    # 仅文档改动或该 commit 已验证过时跳过（tag 发布不会被跳过）
+    if: ${{ needs.plan.outputs.skip != 'true' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 300
     permissions:
@@ -256,7 +303,7 @@ jobs:
     name: Smoke ${{ matrix.platform }} (${{ matrix.ocr }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
-    if: ${{ needs.build.result == 'success' }}
+    if: ${{ needs.plan.outputs.skip != 'true' && needs.build.result == 'success' }}
     permissions:
       contents: read
     strategy:
@@ -307,7 +354,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # 闸门：① 有发布意图 ② 无任何失败（冒烟失败 = 不发布）③ 平台集合完整
-    if: ${{ (inputs.push || startsWith(github.ref, 'refs/tags/')) && !cancelled() && !contains(needs.*.result, 'failure') }}
+    if: ${{ (inputs.push || startsWith(github.ref, 'refs/tags/')) && !cancelled() && !contains(needs.*.result, 'failure') && needs.plan.outputs.skip != 'true' }}
     permissions:
       contents: read
     steps:
