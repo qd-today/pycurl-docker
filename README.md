@@ -112,13 +112,13 @@ ja3 与 ja3-lite 的平台范围由 BoringSSL 决定，而非 Dockerfile 的选�
 `include/openssl/target.h` 的官方架构清单只有 x86 / x86_64 / aarch64 / arm / mips64 /
 riscv64 / pnacl / wasm / asmjs / myriad2，因此：
 
-- **ppc64le**：不在清单内。虽是 little-endian，给 `target.h` 打补丁并关掉
-  `-Werror=unused-function` 可以编过，但要长期维护对加密库的源码补丁、每次升级
-  curl-impersonate 都需重新核对，不纳入发布。需要时可用 `workflow_dispatch` 指定
-  `platforms=linux/ppc64le` 手工构建，不承诺可用。
-- **s390x**：大端。`target.h` 原文为 “Functions will not produce the correct answer on
-  other systems”，能编过也会算错，不支持。
-- **loong64**：BoringSSL 没有 loongarch 条目。
+- **ppc64le**：不在清单内。上游有移植 PR（#231）但未合并，且其构建方式已与当前
+  superbuild 不一致；自行给 `target.h` 打补丁虽能编过，却要长期维护对加密库的源码补丁、
+  每次升级 curl-impersonate 都需重新核对，因此不纳入发布。需要时可用 `workflow_dispatch`
+  指定 `platforms=linux/ppc64le` 手工构建，不承诺可用。
+- **s390x**：大端，BoringSSL 官方明确不支持（`target.h` 原文 “Functions will not produce
+  the correct answer on other systems”）。上游有大端移植 PR（#343），未合并且当前无法构建。
+- **loong64**：BoringSSL 没有 loongarch 条目，上游也没有相关 PR。
 
 `latest` 与 `lite-latest` 使用 OpenSSL，不受上述限制；qd 在 ppc64le / s390x / riscv64 上可正常
 运行，只是用不到 TLS 指纹伪装。
