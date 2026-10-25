@@ -17,6 +17,10 @@ on:
         description: '用 GitHub 原生 arm64 runner 构建 arm64（比 QEMU 快 3-5 倍）；该 runner 不可用时取消勾选回退 QEMU'
         type: boolean
         default: true
+      pycurl_version:
+        description: '指定 pycurl 版本（留空 = Dockerfile 默认值 7.48.0）'
+        type: string
+        default: ''
 jobs:
   image:
     # 三个变体共用 .github/workflows/_image.yml：plan -> build(架构组矩阵) -> smoke(每平台一个 job) -> publish
@@ -29,7 +33,10 @@ jobs:
       latest_tag: lite-latest
       version_prefix: 'lite-'
       smoke_role: lite
-      default_platforms: linux/386,linux/arm64,linux/amd64,linux/arm/v6,linux/arm/v7,linux/ppc64le,linux/riscv64,linux/s390x
+      default_platforms: linux/386,linux/arm64,linux/amd64,linux/arm/v6,linux/arm/v7,linux/ppc64le,linux/riscv64,linux/s390x,linux/loong64
+      # 官方 alpine 无 loong64 变体，该架构改用龙芯社区基座（仅 FROM 不同）
+      loong64_dockerfile: Dockerfile.lite.loong64
       platforms: ${{ github.event.inputs.platforms || '' }}
       push: ${{ github.event.inputs.push == 'true' }}
       native_arm: ${{ github.event.inputs.native_arm != 'false' }}
+      pycurl_version: ${{ github.event.inputs.pycurl_version || '' }}

@@ -49,6 +49,14 @@ on:
         description: '是否用原生 arm64 runner 构建 arm64'
         type: boolean
         default: true
+      loong64_dockerfile:
+        description: 'loong64 架构组使用的 Dockerfile（留空 = 与 dockerfile 相同）'
+        type: string
+        default: ''
+      pycurl_version:
+        description: '覆盖 Dockerfile 中的 PYCURL_VERSION（留空 = 用 Dockerfile 默认值）'
+        type: string
+        default: ''
     secrets:
       DOCKER_USERNAME:
         required: false
@@ -69,6 +77,16 @@ jobs:
       expected: ${{ steps.plan.outputs.expected }}
       full: ${{ steps.plan.outputs.full }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Verify loong64 Dockerfile only differs in FROM
+        # loong64 基座（ghcr.io/loong64/alpine）与官方 alpine 的差异只应出现在 FROM 行；
+        # 出现其它差异说明两份文件已漂移，构建出来的 loong64 镜像会与其它架构不同源
+        if: inputs.loong64_dockerfile != ''
+        run: |
+          diff -u             <(sed 's|^FROM .*|FROM <base>|' "${{ inputs.dockerfile }}") \
+            <(sed 's|^FROM .*|FROM <base>|' "${{ inputs.loong64_dockerfile }}") \
+            || { echo "::error::${{ inputs.loong64_dockerfile }} 与 ${{ inputs.dockerfile }} 除 FROM 外不一致"; exit 1; }
       - name: Compute matrices
         id: plan
         env:
@@ -76,6 +94,8 @@ jobs:
           DEFAULT_PLATFORMS: ${{ inputs.default_platforms }}
           NATIVE_ARM: ${{ inputs.native_arm && 'true' || 'false' }}
           VARIANT: ${{ inputs.variant }}
+          DOCKERFILE: ${{ inputs.dockerfile }}
+          LOONG64_DOCKERFILE: ${{ inputs.loong64_dockerfile }}
         run: |
           python3 - <<'PY' > /tmp/plan.out
           import json, os, sys
@@ -95,6 +115,14 @@ jobs:
           arm_runner = "ubuntu-24.04-arm" if native else "ubuntu-latest"
           variant = os.environ["VARIANT"]
 
+          # loong64 组可能需要单独的 Dockerfile（例如 lite 变体的官方 alpine 基座
+          # 没有 loong64 变体，只能换 ghcr.io/loong64/alpine）；其余组统一用 dockerfile
+          dockerfile = os.environ["DOCKERFILE"]
+          loong64_file = (os.environ.get("LOONG64_DOCKERFILE") or "").strip()
+
+          def file_of(group):
+              return loong64_file if (group == "loong64" and loong64_file) else dockerfile
+
           # 按「是否本机原生 + 编译量级」分组；组间完全并行，互不抢 CPU
           # 注意 loong64：只有主变体能支持。主变体 FROM a76yyyy/ddddocr:latest，
           # 该镜像的 manifest 已含 loong64（用龙芯社区基座单独构建后合并）；
@@ -111,7 +139,8 @@ jobs:
           for name, runner, group_plats in GROUPS:
               sel = [p for p in group_plats if p in plats]
               if sel:
-                  include.append({"group": name, "runner": runner, "platforms": ",".join(sel)})
+                  include.append({"group": name, "runner": runner,
+                                  "platforms": ",".join(sel), "file": file_of(name)})
           if not include:
               sys.exit("::error::没有可构建的平台")
 
@@ -131,6 +160,7 @@ jobs:
                   "group": GROUP_OF[p],
                   "ocr": "ocr" if (p in OCR_STACK and variant != "lite") else "nocr",
                   "runner": arm_runner if p == "linux/arm64" else "ubuntu-latest",
+                  "file": file_of(GROUP_OF[p]),
               })
 
           print("matrix=" + json.dumps({"include": include}))
@@ -173,13 +203,27 @@ jobs:
           registry: docker.io
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Compose build args
+        id: args
+        # 只在该输入非空时传 PYCURL_VERSION：直接传空串会把 Dockerfile 里的默认值覆盖成空，
+        # 变成 `pip install "pycurl=="`。build 与 smoke 必须产出完全相同的 build-args，
+        # 否则缓存 scope 命中不了，冒烟阶段会退化成全量重编译
+        env:
+          V: ${{ inputs.pycurl_version }}
+        run: |
+          if [ -n "$V" ]; then
+            echo "args=PYCURL_VERSION=$V" >> "$GITHUB_OUTPUT"
+          else
+            echo "args=" >> "$GITHUB_OUTPUT"
+          fi
       - name: Build
         id: build
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./${{ inputs.dockerfile }}
+          file: ./${{ matrix.file }}
           platforms: ${{ matrix.platforms }}
+          build-args: ${{ steps.args.outputs.args }}
           # 发布模式按 digest 推送：各架构组并行构建，用 digest 传递产物不必协调 tag 命名，
           # 也不在 tag 列表里留下对使用者无意义、却可被拉取的中间产物。
           # （Hub API 支持删除 tag——需要一次带凭据的调用；不产 tag 就连清理都不需要。）
@@ -225,16 +269,30 @@ jobs:
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+      - name: Compose build args
+        id: args
+        # 只在该输入非空时传 PYCURL_VERSION：直接传空串会把 Dockerfile 里的默认值覆盖成空，
+        # 变成 `pip install "pycurl=="`。build 与 smoke 必须产出完全相同的 build-args，
+        # 否则缓存 scope 命中不了，冒烟阶段会退化成全量重编译
+        env:
+          V: ${{ inputs.pycurl_version }}
+        run: |
+          if [ -n "$V" ]; then
+            echo "args=PYCURL_VERSION=$V" >> "$GITHUB_OUTPUT"
+          else
+            echo "args=" >> "$GITHUB_OUTPUT"
+          fi
       - name: Materialize image from cache (${{ matrix.platform }})
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: ./${{ inputs.dockerfile }}
+          file: ./${{ matrix.file }}
           platforms: ${{ matrix.platform }}
           load: true
           push: false
           tags: pycurl-smoke:test
           provenance: false
+          build-args: ${{ steps.args.outputs.args }}
           # build-args 必须与 build 阶段一致，否则缓存不命中会退化成全量重编译
           cache-from: type=gha,scope=pycurl-${{ inputs.variant }}-${{ matrix.group }}
       # 脚本经 stdin 喂进容器（python3 -），不进镜像、不加层、不依赖 bind mount

@@ -17,6 +17,10 @@ on:
         description: '用 GitHub 原生 arm64 runner 构建 arm64（比 QEMU 快 3-5 倍）；该 runner 不可用时取消勾选回退 QEMU'
         type: boolean
         default: true
+      pycurl_version:
+        description: '指定 pycurl 版本（留空 = Dockerfile 默认值 7.48.0）'
+        type: string
+        default: ''
 jobs:
   image:
     # 三个变体共用 .github/workflows/_image.yml：plan -> build(架构组矩阵) -> smoke(每平台一个 job) -> publish
@@ -33,3 +37,4 @@ jobs:
       platforms: ${{ github.event.inputs.platforms || '' }}
       push: ${{ github.event.inputs.push == 'true' }}
       native_arm: ${{ github.event.inputs.native_arm != 'false' }}
+      pycurl_version: ${{ github.event.inputs.pycurl_version || '' }}
