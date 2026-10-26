@@ -41,11 +41,17 @@ ARG GIT_DOMAIN="https://github.com"
 COPY patches/pycurl-impersonate.patch /tmp/pycurl-impersonate.patch
 
 # Install curl-impersonate & build patched pycurl
+# 说明：libcurl 的真实文件（libcurl.so.4.8.0）被登记在 Alpine libcurl 包名下（它是 git 的依赖），
+# 而文件内容其实是我们自编的那份（curl --version 报 8.23.0 / 8.23.0-IMPERSONATE）。
+# apk del .build_deps 会按包所有权把它删掉 → curl 与 pycurl 都因缺 libcurl.so.4 而不可用，
+# 所以删之前先备份、删之后立刻恢复。这也是 git 能移出运行时的前提。
 RUN { [ -z "$APK_MIRROR" ] || sed -i "s|https://dl-cdn.alpinelinux.org|$APK_MIRROR|g" /etc/apk/repositories; } && \
     { [ -z "$PIP_MIRROR" ] || export PIP_INDEX_URL="$PIP_MIRROR"; } && \
     apk update && \
-    apk add --update --no-cache bash git tzdata ca-certificates python3 py3-six && \
-    apk add --update --no-cache --virtual .build_deps nano openssh-client \
+    apk add --update --no-cache bash tzdata ca-certificates python3 py3-six && \
+    # git 只在构建期 clone 源码时用，不能留在运行时：它会带进一整套 go/证书工具链，
+    # 也给了入侵者一个现成的横向移动工具。qd 的 update.sh 已改为下载归档包，不依赖 git
+    apk add --update --no-cache --virtual .build_deps git nano openssh-client \
     cmake ninja make musl-dev perl autoconf g++ automake linux-headers libtool \
     xz-libs xz-dev bzip2 unzip zip curl patch pkgconfig \
     python3-dev py3-pip py3-setuptools py3-wheel && \
@@ -81,7 +87,9 @@ RUN { [ -z "$APK_MIRROR" ] || sed -i "s|https://dl-cdn.alpinelinux.org|$APK_MIRR
     rm -rf /tmp/pycurl /tmp/pycurl-dl /tmp/pycurl-impersonate.patch && \
     cd / && \
     rm -rf /curl-impersonate && \
+    mkdir -p /tmp/libcurl-keep && cp -a /usr/lib/libcurl.so* /tmp/libcurl-keep/ && \
     apk del .build_deps && \
+    cp -a /tmp/libcurl-keep/. /usr/lib/ && rm -rf /tmp/libcurl-keep && \
     apk add --no-cache ca-certificates libstdc++ && \
     # 上游安装的私有静态库（.a）仅供静态链接使用，运行时纯属死重量，删除以控制镜像体积
     rm -rf /usr/lib/curl-impersonate && \

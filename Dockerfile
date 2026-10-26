@@ -28,11 +28,17 @@ ARG GIT_DOMAIN="https://github.com"
 ARG TARGETARCH
 
 # Install packages & Install openssl nghttp3 ngtcp2 curl & Pip install pycurl
+# 说明：libcurl 的真实文件（libcurl.so.4.8.0）被登记在 Alpine libcurl 包名下（它是 git 的依赖），
+# 而文件内容其实是我们自编的那份（curl --version 报 8.23.0 / 8.23.0-IMPERSONATE）。
+# apk del .build_deps 会按包所有权把它删掉 → curl 与 pycurl 都因缺 libcurl.so.4 而不可用，
+# 所以删之前先备份、删之后立刻恢复。这也是 git 能移出运行时的前提。
 RUN { [ -z "$APK_MIRROR" ] || sed -i "s|https://dl-cdn.alpinelinux.org|$APK_MIRROR|g" /etc/apk/repositories; } && \
     { [ -z "$PIP_MIRROR" ] || export PIP_INDEX_URL="$PIP_MIRROR"; } && \
     apk update && \
-    apk add --update --no-cache bash git tzdata ca-certificates python3 py3-six && \
-    apk add --update --no-cache --virtual .build_deps nano openssh-client \
+    apk add --update --no-cache bash tzdata ca-certificates python3 py3-six && \
+    # git 只在构建期 clone 源码时用，不能留在运行时：它会带进一整套 go/证书工具链，
+    # 也给了入侵者一个现成的横向移动工具。qd 的 update.sh 已改为下载归档包，不依赖 git
+    apk add --update --no-cache --virtual .build_deps git nano openssh-client \
     cmake make perl autoconf g++ automake linux-headers libtool util-linux file \
     libidn2-dev libgsasl-dev krb5-dev zstd-dev nghttp2-dev zlib-dev brotli-dev \
     python3-dev py3-pip py3-setuptools py3-wheel c-ares-dev libpsl-dev && \
@@ -111,7 +117,9 @@ RUN { [ -z "$APK_MIRROR" ] || sed -i "s|https://dl-cdn.alpinelinux.org|$APK_MIRR
     # 构建期自检：HTTP3 特性在位 + pycurl 可 import（编译/链接问题在此暴露，不留到运行时）
     curl --version | grep -q HTTP3 && \
     python3 -c "import pycurl" && \
+    mkdir -p /tmp/libcurl-keep && cp -a /usr/lib/libcurl.so* /tmp/libcurl-keep/ && \
     apk del .build_deps && \
+    cp -a /tmp/libcurl-keep/. /usr/lib/ && rm -rf /tmp/libcurl-keep && \
     # 运行时补齐被 .build_deps 清除的动态依赖（不用 --update：索引已在 RUN 开头刷新过，
     # 避免多余的索引拉取引入网络不确定性）
     apk add --no-cache libidn2 libgsasl zstd-libs zlib c-ares nghttp2 libpsl brotli-libs && \
