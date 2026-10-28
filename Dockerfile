@@ -1,5 +1,9 @@
 # 基础镜像
-FROM a76yyyy/ddddocr:latest
+# 基座固定 tag，不用 latest：latest 会让 pycurl 的产物不可复现
+# （ddddocr 一发版，任何后续重建都会悄悄换基座）。升级基座时显式改这里的默认值，
+# 或用 --build-arg BASE_IMAGE=... 覆盖
+ARG BASE_IMAGE=a76yyyy/ddddocr:1.6.1
+FROM ${BASE_IMAGE}
 
 # 维护者信息
 LABEL maintainer "a76yyyy <q981331502@163.com>"
