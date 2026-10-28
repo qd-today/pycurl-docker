@@ -151,14 +151,16 @@ jobs:
             echo "skip=true" >> "$GITHUB_OUTPUT"; echo "reason=unrelated-to-this-variant"
           fi
       - name: Verify derived Dockerfile only differs in FROM
-        # 派生 Dockerfile（loong64 的龙芯基座、ja3-lite 的纯 alpine 基座）只应改 FROM 行；
+        # 派生 Dockerfile（loong64 的龙芯基座、ja3-lite 的纯 alpine 基座）只应改基座声明；
         # 出现其它差异说明两份文件已漂移，会构建出与基准不同源的镜像
         if: inputs.loong64_dockerfile != '' || inputs.mirror_of != ''
         run: |
           set -eu
           check() {  # $1=派生文件 $2=基准文件
-            a=$(sed 's|^FROM .*|FROM <base>|' "$1")
-            b=$(sed 's|^FROM .*|FROM <base>|' "$2")
+            # 基座现在写成 ARG BASE_IMAGE=... + FROM ${BASE_IMAGE}，所以 ARG 行也要归一化
+            norm() { sed -e 's|^FROM .*|FROM <base>|' -e 's|^ARG BASE_IMAGE=.*|ARG BASE_IMAGE=<base>|' "$1"; }
+            a=$(norm "$1")
+            b=$(norm "$2")
             if [ "$a" != "$b" ]; then
               echo "::error::$1 与 $2 除 FROM 外不一致（派生文件已漂移）"
               diff -u <(printf '%s\n' "$b") <(printf '%s\n' "$a") || true

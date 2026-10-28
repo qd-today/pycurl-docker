@@ -1,7 +1,8 @@
 # 基础镜像（lite 版：纯 Alpine，不含 ddddocr/onnxruntime，体积最小）
 # 钉 3.24 稳定分支：与 ddddocr 基础镜像同分支、构建可复现；edge 是滚动分支，
 # 基座包（musl/python3/busybox）每日漂移，不适合需要可复现构建的场景
-FROM ghcr.io/loong64/alpine:3.24
+ARG BASE_IMAGE=ghcr.io/loong64/alpine:3.24
+FROM ${BASE_IMAGE}
 
 # 维护者信息
 LABEL maintainer "a76yyyy <q981331502@163.com>"
