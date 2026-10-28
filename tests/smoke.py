@@ -109,6 +109,18 @@ def check_pycurl():
     return pycurl
 
 
+def check_no_git():
+    """git 只该在构建期存在（.build_deps 里 clone 源码用），运行时不该有。
+
+    它带进 /usr/bin/git + 4MB git-core，以及一整套证书与网络工具链，
+    对运行时镜像没有任何用途。这条断言防的是「有人把 git 加回运行时包列表」。
+    """
+    import shutil
+
+    assert shutil.which("git") is None, "镜像里出现 git，它只该在 .build_deps 里"
+    print("git: 不存在（符合预期）")
+
+
 def check_ocr(expect):
     """expect=True 断言 OCR 栈真的能推理；False 断言这里确实没有 OCR 栈。
 
@@ -141,6 +153,19 @@ def check_ocr(expect):
 
     print("cv2 %s | numpy %s | onnxruntime %s"
           % (cv2.__version__, np.__version__, onnxruntime.__version__))
+
+    # 基座的 Pillow 是自编译版本：13.x 起才有 JPEG/TIFF/FPX 解码器的修复，
+    # 且不链 libimagequant（GPL-3.0）。两条都是这次换掉 apk py3-pillow 的理由，
+    # 谁把基座退回旧版，这里会立刻失败。
+    from PIL import Image, features
+
+    assert int(Image.__version__.split(".")[0]) >= 13, (
+        "Pillow 版本过低（%s），解码器 CVE 修复需要 13.x" % Image.__version__
+    )
+    assert not features.check("libimagequant"), (
+        "Pillow 链上了 libimagequant（GPL-3.0），基座不该再带它"
+    )
+    print("Pillow %s | 无 libimagequant" % Image.__version__)
 
     img = np.full((40, 120, 3), 255, dtype=np.uint8)
     cv2.putText(img, "AB12", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 2)
@@ -399,6 +424,9 @@ def main(argv):
 
     print("== pycurl 基础能力 ==")
     check_pycurl()
+
+    print("== 运行时不带构建工具 ==")
+    check_no_git()
 
     print("== 产物架构 ==")
     # libcurl / libssl 覆盖自编译的加密与传输栈；pycurl 扩展覆盖 C 扩展编译链路
