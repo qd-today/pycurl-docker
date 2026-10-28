@@ -44,13 +44,13 @@ FROM a76yyyy/pycurl:latest
 
 | 组件 | latest | ja3-latest | lite-latest | ja3-lite-latest |
 |---|---|---|---|---|
-| 基础镜像 | `a76yyyy/ddddocr:latest` | `a76yyyy/ddddocr:latest` | `alpine:3.24` | `alpine:3.24` |
+| 基础镜像 | `a76yyyy/ddddocr:1.6.1` | `a76yyyy/ddddocr:1.6.1` | `alpine:3.24` | `alpine:3.24` |
 | Python | 3.14 | 3.14 | 3.14 | 3.14 |
 | curl | 8.23.0（自编） | curl-impersonate（固定 commit `df38987`，基于 curl 8.23.0） | 8.23.0（自编） | 同 ja3-latest |
 | TLS 库 | OpenSSL 3.5.9 LTS（自编） | BoringSSL（随 curl-impersonate 的固定 commit） | OpenSSL 3.5.9 LTS（Alpine 包） | BoringSSL |
 | HTTP/3 后端 | ngtcp2 1.25.0 + nghttp3 1.18.0 | ngtcp2 + BoringSSL | 同 latest | ngtcp2 + BoringSSL |
 | pycurl | 7.48.0（`PYCURL_VERSION` 可覆盖） | 7.48.0 + `patches/pycurl-impersonate.patch` | 7.48.0（`PYCURL_VERSION` 可覆盖） | 同 ja3-latest |
-| OCR | ddddocr 1.6.1 + onnxruntime 1.24.4 | 同 latest | 无 | 无 |
+| OCR | ddddocr 1.6.1 + onnxruntime 1.24.4 + Pillow 13.0.0 | 同 latest | 无 | 无 |
 
 OpenSSL 3.5 是 LTS（支持至 2030-04），原生提供 QUIC API，ngtcp2 v1.12.0 起可直接对接，
 因此不需要已停止维护的 quictls fork。
@@ -186,6 +186,7 @@ pycurl 版本由 `PYCURL_VERSION` 构建参数固定（默认 7.48.0），四条
 | `APK_MIRROR` | apk 包源 | `https://mirrors.tuna.tsinghua.edu.cn` |
 | `PIP_MIRROR` | pip 索引（pycurl sdist 也走它） | `https://pypi.tuna.tsinghua.edu.cn/simple` |
 | `GIT_DOMAIN` | 源码 clone 的 GitHub 前缀，覆盖 openssl / nghttp3 / ngtcp2 / curl-impersonate | `https://gh-proxy.com/https://github.com` |
+| `BASE_IMAGE` | 基座镜像。默认已固定 tag（`a76yyyy/ddddocr:1.6.1`，lite 线为 `alpine:3.24`），需要换基座时才覆盖 | `a76yyyy/ddddocr:1.6.1` |
 
 ```bash
 docker buildx build --platform linux/ppc64le \
