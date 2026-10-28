@@ -49,6 +49,10 @@ on:
         description: '是否用原生 arm64 runner 构建 arm64'
         type: boolean
         default: true
+      native_riscv:
+        description: '是否用 RISE 的免费原生 riscv64 runner 构建 riscv64（需先在 org 安装 RISE RISC-V Runners App）'
+        type: boolean
+        default: false
       loong64_dockerfile:
         description: 'loong64 架构组使用的 Dockerfile（留空 = 与 dockerfile 相同）'
         type: string
@@ -175,6 +179,7 @@ jobs:
           PLATFORM_INPUT: ${{ inputs.platforms }}
           DEFAULT_PLATFORMS: ${{ inputs.default_platforms }}
           NATIVE_ARM: ${{ inputs.native_arm && 'true' || 'false' }}
+          NATIVE_RISCV: ${{ inputs.native_riscv && 'true' || 'false' }}
           VARIANT: ${{ inputs.variant }}
           DOCKERFILE: ${{ inputs.dockerfile }}
           LOONG64_DOCKERFILE: ${{ inputs.loong64_dockerfile }}
@@ -195,6 +200,12 @@ jobs:
 
           native = (os.environ.get("NATIVE_ARM") != "false")
           arm_runner = "ubuntu-24.04-arm" if native else "ubuntu-latest"
+          # RISE（Linux Foundation Europe）给开源项目提供免费的原生 riscv64 runner。
+          # 默认关闭：没装那个 GitHub App 时，runs-on: ubuntu-24.04-riscv 会一直排队，
+          # 把发布卡死。装好并在单条线上验证过之后再把这个默认值改成 true。
+          riscv_runner = ("ubuntu-24.04-riscv"
+                          if os.environ.get("NATIVE_RISCV") == "true"
+                          else "ubuntu-latest")
           variant = os.environ["VARIANT"]
 
           # loong64 组可能需要单独的 Dockerfile（例如 lite 变体的官方 alpine 基座
@@ -217,7 +228,7 @@ jobs:
               # 合在一组会串行累加（单组接近 5 小时作业上限），拆开后并行
               ("ppc64le", "ubuntu-latest", ["linux/ppc64le"]),
               ("s390x",   "ubuntu-latest", ["linux/s390x"]),
-              ("riscv64", "ubuntu-latest", ["linux/riscv64"]),
+              ("riscv64", riscv_runner,  ["linux/riscv64"]),
               ("loong64", "ubuntu-latest", ["linux/loong64"]),
           ]
           include = []
@@ -246,7 +257,9 @@ jobs:
                   "platform": p,
                   "group": GROUP_OF[p],
                   "ocr": "ocr" if (p in OCR_STACK and variant in OCR_VARIANTS) else "nocr",
-                  "runner": arm_runner if p == "linux/arm64" else "ubuntu-latest",
+                  "runner": (arm_runner if p == "linux/arm64"
+                             else riscv_runner if p == "linux/riscv64"
+                             else "ubuntu-latest"),
                   "file": file_of(GROUP_OF[p]),
               })
 
