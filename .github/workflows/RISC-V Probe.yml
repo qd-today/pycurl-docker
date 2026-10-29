@@ -1,0 +1,48 @@
+name: RISC-V Probe
+
+# 一次性探针：确认 RISE 的免费原生 riscv64 runner 能用、够用。
+# 只采集事实，不产出镜像、不碰发布流程。
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04-riscv
+    timeout-minutes: 15
+    steps:
+      - name: 原生架构
+        run: |
+          set -eux
+          uname -m
+          uname -a
+          echo "cores=$(nproc)"
+          free -h || true
+          df -h / | tail -1
+
+      - name: Docker 与 Buildx
+        run: |
+          set -eux
+          docker version
+          docker buildx version
+          docker buildx ls
+
+      - name: 原生构建一次（不经 QEMU）
+        run: |
+          set -eux
+          mkdir -p /tmp/probe && cd /tmp/probe
+          printf 'FROM alpine:3.24\nRUN uname -m > /arch\n' > Dockerfile
+          docker buildx build --platform linux/riscv64 -t probe:riscv64 --load .
+          docker run --rm probe:riscv64 cat /arch
+
+      - name: 编译耗时基线（python C 扩展）
+        run: |
+          set -eux
+          mkdir -p /tmp/py && cd /tmp/py
+          cat > Dockerfile <<'DOCKERFILE'
+          FROM alpine:3.24
+          RUN apk add --no-cache python3 py3-pip py3-setuptools py3-wheel build-base python3-dev
+          RUN pip wheel --no-cache-dir --no-deps --break-system-packages -w /out "greenlet==3.5.0"
+          DOCKERFILE
+          start=$(date +%s)
+          docker buildx build --platform linux/riscv64 -t probe:py --load . 2>&1 | tail -15
+          echo "greenlet 编译+构建总耗时: $(( $(date +%s) - start )) 秒"
