@@ -129,13 +129,13 @@ riscv64 / pnacl / wasm / asmjs / myriad2，因此：
 
 | 线 | 首次拉取 | 占用磁盘 | 容器内 |
 |---|---|---|---|
-| `latest` | 173 MB | 542 MB | 346 MB |
-| `ja3-latest` | 195 MB | 607 MB | 391 MB |
-| `lite-latest` | 34 MB | 127 MB | 88 MB |
-| `ja3-lite-latest` | 63 MB | 229 MB | 158 MB |
+| `latest` | 161 MB | 502 MB | 335 MB |
+| `ja3-latest` | 180 MB | 557 MB | 376 MB |
+| `lite-latest` | 28 MB | 108 MB | 80 MB |
+| `ja3-lite-latest` | 55 MB | 199 MB | 145 MB |
 
 多架构镜像只下载你所在架构的那一份。差异主要来自基座：`latest` 与 `ja3-latest`
-基于 ddddocr（带 OCR 栈），另外两条是纯 Alpine——只要 pycurl 时选后两条，小 3–4 倍。
+基于 ddddocr（带 OCR 栈），另外两条是纯 Alpine——只要 pycurl 时选后两条，体积小 3–6 倍。
 
 ## 标签
 
