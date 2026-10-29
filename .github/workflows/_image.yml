@@ -52,7 +52,7 @@ on:
       native_riscv:
         description: '是否用 RISE 的免费原生 riscv64 runner 构建 riscv64（需先在 org 安装 RISE RISC-V Runners App）'
         type: boolean
-        default: true
+        default: false
       cache_bust:
         description: '缓存 scope 后缀。留空=复用缓存；填任意值=不复用旧层（基准测试或需要强制重建时用）'
         type: string
