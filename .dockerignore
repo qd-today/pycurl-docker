@@ -1,0 +1,10 @@
+# 构建上下文不需要的东西：镜像只从 Dockerfile 与 patches/ 取料，
+# 测试、文档、版本库自身的元数据都不进镜像，但会随上下文发给 builder。
+.git
+.github
+docs/
+tests/
+*.md
+__pycache__/
+*.pyc
+.dockerignore
