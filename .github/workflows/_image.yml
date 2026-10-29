@@ -52,7 +52,7 @@ on:
       native_riscv:
         description: '是否用 RISE 的免费原生 riscv64 runner 构建 riscv64（需先在 org 安装 RISE RISC-V Runners App）'
         type: boolean
-        default: false
+        default: true
       loong64_dockerfile:
         description: 'loong64 架构组使用的 Dockerfile（留空 = 与 dockerfile 相同）'
         type: string

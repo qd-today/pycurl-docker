@@ -20,7 +20,7 @@ on:
       native_riscv:
         description: '用 RISE 的原生 riscv64 runner 构建 riscv64（比 QEMU 快一个数量级）；需先在 org 安装 RISE RISC-V Runners App，否则 job 会一直排队'
         type: boolean
-        default: false
+        default: true
       pycurl_version:
         description: '指定 pycurl 版本（留空 = Dockerfile 默认值 7.48.0）'
         type: string
@@ -42,5 +42,5 @@ jobs:
       platforms: ${{ github.event.inputs.platforms || '' }}
       push: ${{ github.event.inputs.push == 'true' }}
       native_arm: ${{ github.event.inputs.native_arm != 'false' }}
-      native_riscv: ${{ github.event.inputs.native_riscv == 'true' }}
+      native_riscv: ${{ github.event.inputs.native_riscv != 'false' }}
       pycurl_version: ${{ github.event.inputs.pycurl_version || '' }}
