@@ -21,6 +21,10 @@ on:
         description: '用 RISE 的原生 riscv64 runner 构建 riscv64（比 QEMU 快一个数量级）；需先在 org 安装 RISE RISC-V Runners App，否则 job 会一直排队'
         type: boolean
         default: true
+      cache_bust:
+        description: '缓存 scope 后缀。留空=复用缓存；填任意值=强制不复用旧层（基准测试用）'
+        type: string
+        default: ''
       pycurl_version:
         description: '指定 pycurl 版本（留空 = Dockerfile 默认值 7.48.0）'
         type: string
@@ -42,6 +46,7 @@ jobs:
       push: ${{ github.event.inputs.push == 'true' }}
       native_arm: ${{ github.event.inputs.native_arm != 'false' }}
       native_riscv: ${{ github.event.inputs.native_riscv != 'false' }}
+      cache_bust: ${{ github.event.inputs.cache_bust || '' }}
       pycurl_version: ${{ github.event.inputs.pycurl_version || '' }}
       # 与 Dockerfile.ja3 的差异只允许在 FROM 行（CI 会校验）
       mirror_of: Dockerfile.ja3
