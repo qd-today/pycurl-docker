@@ -1,72 +1,79 @@
 name: _Image (reusable)
 
-# 四个变体（main / ja3 / lite / ja3-lite）共用的构建-冒烟-发布流水线。
-# 变体差异全部由 inputs 表达，避免三份 workflow 各抄一遍逻辑后逐渐漂移
-# （此前就是三份独立 workflow：同一批 QEMU/dispatch/冒烟改动要改三次）。
+# pycurl 两条构建线（不含 IMPERSONATE / 含 IMPERSONATE）共用的流水线。每条线每平台同时
+# 产出 **wheelhouse 镜像** 与 **runtime 镜像**，逐平台冒烟，全绿且平台集合完整才分别合并
+# 两套 manifest 发布。
 #
-# 阶段划分（与 ddddocr 保持一致的三段解耦）：
-#   1) build  ：按架构组并行构建，ARM64 走 GitHub 原生 arm64 runner；
-#               发布模式按 digest 推到 Docker Hub（push-by-digest，不产任何中间 tag）
-#   2) smoke  ：从 build 写下的层缓存重建单平台镜像（命中缓存 = 秒级），逐平台真跑
-#   3) publish：全部构建 + 全部冒烟通过后，用 imagetools 把各 digest 合并成正式 tag，
-#               并断言 manifest 平台集合与计划一致
+# Dockerfile 的两个出口 stage：
+#   * `--target wheel`   → `FROM scratch` + `/wheels`（pycurl wheel、SHA256SUMS、
+#                          system-packages.txt、PEP 503 索引）。镜像本身就是 wheel 的载体：
+#                          按 digest 推送，使用者 `docker build --mount=from=<tag>` 即可取用。
+#   * `--target runtime` → `alpine` + Python 3.14 + 已装好的 pycurl（里面**没有** /wheels）。
+#
+# 阶段划分（与 onnxruntime-docker 一致的四段解耦）：
+#   1) plan   ：算出构建分组、冒烟矩阵、平台全集与「是否全量」，下游只吃 outputs
+#   2) build  ：每个架构组一个 job，一次编译两个出口（build 阶段共享，不重复编译）；
+#               发布模式两个出口各自 push-by-digest（不产任何中间 tag）
+#   3) smoke  ：每个平台一个 job，**直接跑 runtime 镜像**，验的是使用者拿到的那个镜像本身
+#   4) publish：全部构建 + 全部冒烟通过、且平台集合完整，才合并 manifest；同一条线的
+#               滚动 tag 与 lite 别名用一次 imagetools create 挂到同一个 manifest 上
 on:
   workflow_call:
     inputs:
-      variant:
-        description: '变体标识，仅用于缓存 scope 与日志命名'
+      line:
+        description: '构建线标识（main / ja3），仅用于缓存 scope 与日志'
         type: string
         required: true
       dockerfile:
-        description: '该变体的 Dockerfile'
+        description: '该线的 Dockerfile'
         type: string
         required: true
-      latest_tag:
-        description: '滚动 tag，如 latest / ja3-latest / lite-latest'
+      latest_tags:
+        description: '滚动 tag，空格分隔；多个别名指向同一个 manifest'
         type: string
         required: true
       version_prefix:
-        description: '版本 tag 前缀，main 为空串，ja3/lite 为 ja3- / lite-'
+        description: '版本 tag 前缀，main 为空串，ja3 为 ja3-'
         type: string
         required: true
-      smoke_role:
-        description: '冒烟脚本的角色参数：main / ja3 / lite'
+      lite_version_prefix:
+        description: 'lite 版本 tag 前缀，main 为 lite-，ja3 为 ja3-lite-'
+        type: string
+        required: true
+      wheelhouse_tags:
+        description: 'wheelhouse 的滚动 tag，如 wheelhouse / ja3-wheelhouse'
         type: string
         required: true
       default_platforms:
-        description: '该变体的默认平台集合（逗号分隔）'
+        description: '该线的默认平台集合（逗号分隔）'
         type: string
         required: true
       platforms:
-        description: '平台子集（空 = 用 default_platforms）'
+        description: '平台子集（空 = 用 default_platforms）。子集禁止发布'
         type: string
         default: ''
       push:
-        description: '构建并冒烟通过后是否发布'
+        description: '构建并冒烟通过后是否发布（tag 推送恒为发布）'
         type: boolean
         default: false
       native_arm:
-        description: '是否用原生 arm64 runner 构建 arm64'
+        description: '用 GitHub 原生 arm64 runner 构建 arm64（比 QEMU 快一个数量级）'
         type: boolean
         default: true
       native_riscv:
-        description: '是否用 RISE 的免费原生 riscv64 runner 构建 riscv64（需先在 org 安装 RISE RISC-V Runners App）'
+        description: '用 RISE 的原生 riscv64 runner 构建 riscv64（需先在 org 安装 RISE RISC-V Runners App）'
         type: boolean
         default: false
+      alpine_version:
+        description: 'alpine 版本，决定 loong64 的基座 tag 与 wheel 的 cpXX tag'
+        type: string
+        default: '3.24'
       cache_bust:
-        description: '缓存 scope 后缀。留空=复用缓存；填任意值=不复用旧层（基准测试或需要强制重建时用）'
-        type: string
-        default: ''
-      loong64_dockerfile:
-        description: 'loong64 架构组使用的 Dockerfile（留空 = 与 dockerfile 相同）'
-        type: string
-        default: ''
-      mirror_of:
-        description: '本变体的 Dockerfile 派生自哪个文件（留空 = 不校验；设置后要求两者仅 FROM 不同）'
+        description: '缓存 scope 后缀。留空=复用缓存；填任意值=不复用旧层'
         type: string
         default: ''
       pycurl_version:
-        description: '覆盖 Dockerfile 中的 PYCURL_VERSION（留空 = 用 Dockerfile 默认值）'
+        description: '覆盖 Dockerfile 中的 PYCURL_VERSION（留空 = 用默认值）'
         type: string
         default: ''
       force:
@@ -82,15 +89,21 @@ on:
 env:
   PUBLISH: ${{ inputs.push || startsWith(github.ref, 'refs/tags/') }}
   IMAGE: docker.io/a76yyyy/pycurl
+  # loong64 专用基座：alpine 官方无此架构
+  LOONG64_BASE: ghcr.io/loong64/alpine
 
 jobs:
   plan:
     runs-on: ubuntu-latest
     name: Plan
+    timeout-minutes: 10
+    permissions:
+      contents: read
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
       smoke_matrix: ${{ steps.plan.outputs.smoke_matrix }}
       expected: ${{ steps.plan.outputs.expected }}
+      groups: ${{ steps.plan.outputs.groups }}
       full: ${{ steps.plan.outputs.full }}
       skip: ${{ steps.changes.outputs.skip }}
     steps:
@@ -99,18 +112,14 @@ jobs:
         with:
           fetch-depth: 0
       - name: Decide whether a rebuild is needed
-        id: changes
-        # 只在 workflow_dispatch 下生效：tag 推送是正式发布，必须全量构建。
-        # 两种情况跳过：
-        #   1) 同一 commit 已有该变体的成功运行（重复 dispatch）
+        # 只在 workflow_dispatch 下生效：tag 推送是正式发布，必须全量构建。两种情况跳过：
+        #   1) 同一 commit 已有该线的成功运行（重复 dispatch）
         #   2) 与上次成功运行相比，改动里没有任何影响镜像的路径（例如只改了 README）
-        # 影响镜像的路径：Dockerfile*、patches/、tests/、.github/workflows/（CI 自身也算，
-        # 改了 CI 就应该重新验证一次）
+        # 影响镜像的路径：Dockerfile、patches/、src/、tests/、system-packages.txt、
+        # CI 自身（改了 CI 就应该重新验证一次）
+        id: changes
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DOCKERFILE: ${{ inputs.dockerfile }}
-          LOONG64: ${{ inputs.loong64_dockerfile }}
-          MIRROR: ${{ inputs.mirror_of }}
           WORKFLOW_NAME: ${{ github.workflow }}
         run: |
           set -euo pipefail
@@ -133,50 +142,27 @@ jobs:
             echo "skip=true" >> "$GITHUB_OUTPUT"; echo "reason=already-verified"; exit 0
           fi
           echo "$changed" | sed 's/^/  /'
-          # 只有与本变体相关的改动才需要重建：
-          #   共享 —— patches/、tests/、_image.yml 自身
-          #   本变体 —— 它的 Dockerfile、loong64 专用 Dockerfile、派生基准、自己的调用方 workflow
-          # 因此改 Dockerfile.ja3 只会重建 ja3 与 ja3-lite（后者派生自它），不连带 main / lite
           relevant=0
           while IFS= read -r f; do
             [ -n "$f" ] || continue
             case "$f" in
-              patches/*|tests/*|.github/workflows/_image.yml|".github/workflows/${WORKFLOW_NAME}.yml")
+              patches/*|src/*|tests/*|system-packages.txt)
+                relevant=1 ;;
+              .github/workflows/_image.yml|.github/workflows/scripts/*)
+                relevant=1 ;;
+              ".github/workflows/${WORKFLOW_NAME}.yml")
                 relevant=1 ;;
               "$DOCKERFILE")
-                relevant=1 ;;
-              ${LOONG64:+"$LOONG64"})
-                relevant=1 ;;
-              ${MIRROR:+"$MIRROR"})
                 relevant=1 ;;
             esac
           done <<EOF
           $changed
           EOF
           if [ "$relevant" = "1" ]; then
-            echo "skip=false" >> "$GITHUB_OUTPUT"; echo "reason=variant-inputs-changed"
+            echo "skip=false" >> "$GITHUB_OUTPUT"; echo "reason=line-inputs-changed"
           else
-            echo "skip=true" >> "$GITHUB_OUTPUT"; echo "reason=unrelated-to-this-variant"
+            echo "skip=true" >> "$GITHUB_OUTPUT"; echo "reason=unrelated-to-this-line"
           fi
-      - name: Verify derived Dockerfile only differs in FROM
-        # 派生 Dockerfile（loong64 的龙芯基座、ja3-lite 的纯 alpine 基座）只应改基座声明；
-        # 出现其它差异说明两份文件已漂移，会构建出与基准不同源的镜像
-        if: inputs.loong64_dockerfile != '' || inputs.mirror_of != ''
-        run: |
-          set -eu
-          check() {  # $1=派生文件 $2=基准文件
-            # 基座现在写成 ARG BASE_IMAGE=... + FROM ${BASE_IMAGE}，所以 ARG 行也要归一化
-            norm() { sed -e 's|^FROM .*|FROM <base>|' -e 's|^ARG BASE_IMAGE=.*|ARG BASE_IMAGE=<base>|' "$1"; }
-            a=$(norm "$1")
-            b=$(norm "$2")
-            if [ "$a" != "$b" ]; then
-              echo "::error::$1 与 $2 除 FROM 外不一致（派生文件已漂移）"
-              diff -u <(printf '%s\n' "$b") <(printf '%s\n' "$a") || true
-              exit 1
-            fi
-          }
-          [ -z "${{ inputs.loong64_dockerfile }}" ] || check "${{ inputs.loong64_dockerfile }}" "${{ inputs.dockerfile }}"
-          [ -z "${{ inputs.mirror_of }}" ] || check "${{ inputs.dockerfile }}" "${{ inputs.mirror_of }}"
       - name: Compute matrices
         id: plan
         env:
@@ -184,95 +170,14 @@ jobs:
           DEFAULT_PLATFORMS: ${{ inputs.default_platforms }}
           NATIVE_ARM: ${{ inputs.native_arm && 'true' || 'false' }}
           NATIVE_RISCV: ${{ inputs.native_riscv && 'true' || 'false' }}
-          VARIANT: ${{ inputs.variant }}
+          LINE: ${{ inputs.line }}
           DOCKERFILE: ${{ inputs.dockerfile }}
-          LOONG64_DOCKERFILE: ${{ inputs.loong64_dockerfile }}
+          ALPINE: ${{ inputs.alpine_version }}
         run: |
-          python3 - <<'PY' > /tmp/plan.out
-          import json, os, sys
-
-          default = [p.strip() for p in os.environ["DEFAULT_PLATFORMS"].split(",") if p.strip()]
-          raw = (os.environ.get("PLATFORM_INPUT") or "").strip()
-          plats = [p.strip() for p in raw.split(",") if p.strip()] if raw else default
-
-          allowed = {"linux/amd64", "linux/386", "linux/arm64", "linux/arm/v7",
-                     "linux/arm/v6", "linux/ppc64le", "linux/riscv64", "linux/s390x",
-                     "linux/loong64"}
-          bad = [p for p in plats if p not in allowed]
-          if bad:
-              sys.exit("::error::未知平台: %s（可选: %s）" % (",".join(bad), ",".join(sorted(allowed))))
-
-          native = (os.environ.get("NATIVE_ARM") != "false")
-          arm_runner = "ubuntu-24.04-arm" if native else "ubuntu-latest"
-          # RISE（Linux Foundation Europe）给开源项目提供免费的原生 riscv64 runner。
-          # 默认关闭：没装那个 GitHub App 时，runs-on: ubuntu-24.04-riscv 会一直排队，
-          # 把发布卡死。装好并在单条线上验证过之后再把这个默认值改成 true。
-          riscv_runner = ("ubuntu-24.04-riscv"
-                          if os.environ.get("NATIVE_RISCV") == "true"
-                          else "ubuntu-latest")
-          variant = os.environ["VARIANT"]
-
-          # loong64 组可能需要单独的 Dockerfile（例如 lite 变体的官方 alpine 基座
-          # 没有 loong64 变体，只能换 ghcr.io/loong64/alpine）；其余组统一用 dockerfile
-          dockerfile = os.environ["DOCKERFILE"]
-          loong64_file = (os.environ.get("LOONG64_DOCKERFILE") or "").strip()
-
-          def file_of(group):
-              return loong64_file if (group == "loong64" and loong64_file) else dockerfile
-
-          # 按「是否本机原生 + 编译量级」分组；组间完全并行，互不抢 CPU
-          # 注意 loong64：只有主变体能支持。主变体 FROM a76yyyy/ddddocr:latest，
-          # 该镜像的 manifest 已含 loong64（用龙芯社区基座单独构建后合并）；
-          # lite 变体 FROM alpine:3.24 官方镜像，Docker Hub 无 loong64 变体；
-          # ja3 变体的 BoringSSL 无 loongarch 目标。所以默认平台里只有主变体带它。
-          GROUPS = [
-              ("x86",     "ubuntu-latest", ["linux/amd64", "linux/386"]),
-              ("arm",     arm_runner,      ["linux/arm64", "linux/arm/v7", "linux/arm/v6"]),
-              # ppc64le 与 s390x 各自成组：两者都要在 QEMU 下全量编译 OpenSSL / curl，
-              # 合在一组会串行累加（单组接近 5 小时作业上限），拆开后并行
-              ("ppc64le", "ubuntu-latest", ["linux/ppc64le"]),
-              ("s390x",   "ubuntu-latest", ["linux/s390x"]),
-              ("riscv64", riscv_runner,  ["linux/riscv64"]),
-              ("loong64", "ubuntu-latest", ["linux/loong64"]),
-          ]
-          include = []
-          for name, runner, group_plats in GROUPS:
-              sel = [p for p in group_plats if p in plats]
-              if sel:
-                  include.append({"group": name, "runner": runner,
-                                  "platforms": ",".join(sel), "file": file_of(name)})
-          if not include:
-              sys.exit("::error::没有可构建的平台")
-
-          # 该平台上的基座 ddddocr 是否带完整 OCR 栈（决定冒烟期望 ocr / nocr）
-          OCR_STACK = {"linux/amd64", "linux/arm64", "linux/arm/v7",
-                       "linux/ppc64le", "linux/riscv64", "linux/loong64"}
-          GROUP_OF = {
-              "linux/amd64": "x86", "linux/386": "x86",
-              "linux/arm64": "arm", "linux/arm/v7": "arm", "linux/arm/v6": "arm",
-              "linux/ppc64le": "ppc64le", "linux/s390x": "s390x",
-              "linux/riscv64": "riscv64", "linux/loong64": "loong64",
-          }
-          # 只有基座是 ddddocr 的变体才带 OCR；lite 与 ja3-lite 都是纯 alpine 基座
-          OCR_VARIANTS = {"main", "ja3"}
-          smoke = []
-          for p in plats:
-              smoke.append({
-                  "platform": p,
-                  "group": GROUP_OF[p],
-                  "ocr": "ocr" if (p in OCR_STACK and variant in OCR_VARIANTS) else "nocr",
-                  "runner": (arm_runner if p == "linux/arm64"
-                             else riscv_runner if p == "linux/riscv64"
-                             else "ubuntu-latest"),
-                  "file": file_of(GROUP_OF[p]),
-              })
-
-          print("matrix=" + json.dumps({"include": include}))
-          print("smoke_matrix=" + json.dumps({"include": smoke}))
-          print("expected=" + ",".join(sorted(plats)))
-          print("full=%s" % str(sorted(plats) == sorted(default)).lower())
-          PY
-          echo "--- 构建分组 ---"
+          # 矩阵逻辑在 .github/workflows/scripts/plan.py，这里只负责落到 $GITHUB_OUTPUT
+          set -euo pipefail
+          python3 .github/workflows/scripts/plan.py > /tmp/plan.out
+          echo "--- 构建矩阵 ---"
           sed -n 's/^matrix=//p' /tmp/plan.out | python3 -m json.tool
           echo "--- 冒烟矩阵 ---"
           sed -n 's/^smoke_matrix=//p' /tmp/plan.out | python3 -m json.tool
@@ -286,7 +191,9 @@ jobs:
     # 仅文档改动或该 commit 已验证过时跳过（tag 发布不会被跳过）
     if: ${{ needs.plan.outputs.skip != 'true' }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 300
+    # QEMU 架构要模拟全量编译 curl（ja3 线还要再加 BoringSSL 与 nghttp3/ngtcp2），
+    # 给到 GitHub 单 job 上限附近，避免慢架构被超时误杀
+    timeout-minutes: 360
     permissions:
       contents: read
     strategy:
@@ -295,14 +202,26 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Guard - dockerfile exposes both exits
+        # 双出口流水线要求 Dockerfile 同时有 `wheel` 与 `runtime` stage，缺一个时 buildx
+        # 只会报 "target stage ... could not be found"，看不懂；这里提前给出明确错误
+        env:
+          DOCKERFILE: ${{ matrix.file }}
+        run: |
+          set -euo pipefail
+          for stage in wheel runtime; do
+            if ! grep -qE "^FROM[[:space:]].*[[:space:]]AS[[:space:]]+${stage}[[:space:]]*$" "$DOCKERFILE"; then
+              echo "::error::${DOCKERFILE} 没有 \`AS ${stage}\` 出口 stage，双出口流水线无法构建。"
+              exit 1
+            fi
+          done
+          echo "出口 stage 齐全（wheel + runtime）"
       - name: Set up QEMU
-        # 组内跨架构平台（arm 组的 armv7/armv6、x86 组的 386 等）需要 binfmt；
-        # 本机架构不走 QEMU
+        # 组内跨架构平台（arm 组的 armv7/armv6、x86 组的 386 等）需要 binfmt
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Login to Docker Hub
-        id: login-dockerhub
         if: env.PUBLISH == 'true'
         uses: docker/login-action@v3
         with:
@@ -311,56 +230,112 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
       - name: Compose build args
         id: args
-        # 只在该输入非空时传 PYCURL_VERSION：直接传空串会把 Dockerfile 里的默认值覆盖成空，
+        # 只在非空时传 PYCURL_VERSION：直接传空串会把 Dockerfile 里的默认值覆盖成空，
         # 变成 `pip install "pycurl=="`。build 与 smoke 必须产出完全相同的 build-args，
         # 否则缓存 scope 命中不了，冒烟阶段会退化成全量重编译
         env:
           V: ${{ inputs.pycurl_version }}
+          A: ${{ inputs.alpine_version }}
+          BASE_IMAGE: ${{ matrix.base_image }}
         run: |
-          if [ -n "$V" ]; then
-            echo "args=PYCURL_VERSION=$V" >> "$GITHUB_OUTPUT"
-          else
-            echo "args=" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Build
-        id: build
+          set -euo pipefail
+          {
+            echo "args<<__BUILD_ARGS__"
+            [ -z "$V" ] || echo "PYCURL_VERSION=$V"
+            [ -z "$A" ] || echo "ALPINE_VERSION=$A"
+            [ -z "$BASE_IMAGE" ] || echo "BASE_IMAGE=$BASE_IMAGE"
+            echo "__BUILD_ARGS__"
+          } >> "$GITHUB_OUTPUT"
+          echo "构建参数：PYCURL_VERSION=${V:-<默认>} ALPINE_VERSION=${A:-<默认>} BASE_IMAGE=${BASE_IMAGE:-<默认>}"
+      - name: Build wheelhouse image
+        id: wheelhouse
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./${{ matrix.file }}
+          # 只到 wheel 阶段：产物就是这个 scratch 镜像里的 /wheels
+          target: wheel
           platforms: ${{ matrix.platforms }}
+          # 发布模式按 digest 推送：各架构组并行构建，用 digest 传递产物不必协调 tag 命名。
+          # 推送开关写在 outputs 里（push=true），这样只有一条 --output，不会出现
+          # 「--push 又叠加一个 type=image」的二义性。
+          outputs: ${{ env.PUBLISH == 'true' && format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.IMAGE) || 'type=local,dest=./dist' }}
           build-args: ${{ steps.args.outputs.args }}
-          # 发布模式按 digest 推送：各架构组并行构建，用 digest 传递产物不必协调 tag 命名，
-          # 也不在 tag 列表里留下对使用者无意义、却可被拉取的中间产物。
-          # （Hub API 支持删除 tag——需要一次带凭据的调用；不产 tag 就连清理都不需要。）
-          push: ${{ env.PUBLISH == 'true' }}
-          outputs: ${{ env.PUBLISH == 'true' && format('type=image,name={0},push-by-digest=true,name-canonical=true', 'docker.io/a76yyyy/pycurl') || '' }}
-          # 保持与旧版行为一致：不产出 attestation 清单（旧 Docker 客户端兼容性）
+          # 不产 attestation 清单，保持 manifest 只有平台条目（旧客户端兼容）
           provenance: false
-          cache-from: type=gha,scope=pycurl-${{ inputs.variant }}-${{ matrix.group }}${{ inputs.cache_bust }}
-          cache-to: type=gha,mode=max,scope=pycurl-${{ inputs.variant }}-${{ matrix.group }}${{ inputs.cache_bust }},ignore-error=true
-      - name: Export digest
+          cache-from: type=gha,scope=pycurl-${{ inputs.line }}-${{ matrix.group }}${{ inputs.cache_bust }}
+          cache-to: type=gha,mode=max,scope=pycurl-${{ inputs.line }}-${{ matrix.group }}${{ inputs.cache_bust }},ignore-error=true
+      - name: Build runtime image
         if: env.PUBLISH == 'true'
+        id: runtime
+        # 只在发布模式构建：非发布模式下冒烟 job 会自己 `--load` 出来跑，避免同一台
+        # runner 上编译两遍（build 阶段仍然从缓存命中）
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./${{ matrix.file }}
+          target: runtime
+          platforms: ${{ matrix.platforms }}
+          outputs: ${{ format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.IMAGE) }}
+          build-args: ${{ steps.args.outputs.args }}
+          provenance: false
+          cache-from: |
+            type=gha,scope=pycurl-${{ inputs.line }}-${{ matrix.group }}${{ inputs.cache_bust }}
+            type=gha,scope=pycurl-${{ inputs.line }}-${{ matrix.group }}-runtime${{ inputs.cache_bust }}
+          cache-to: type=gha,mode=max,scope=pycurl-${{ inputs.line }}-${{ matrix.group }}-runtime${{ inputs.cache_bust }},ignore-error=true
+      - name: Show wheelhouse
+        if: env.PUBLISH != 'true'
+        # 多平台 local 导出会按平台分目录（dist/linux_amd64/wheels/…），单平台则直接是
+        # dist/wheels/…，所以这里用 find 而不是写死路径
+        run: |
+          set -euo pipefail
+          find dist -name '*.whl' | sort
+          find dist -name SHA256SUMS -exec cat {} \;
+          find dist -name system-packages.txt -exec cat {} \;
+      - name: Export digests
+        if: env.PUBLISH == 'true'
+        # 两个出口各一个 digest，分开目录存放，下游 publish 才能把两套 manifest 分清
         run: |
           set -eu
-          mkdir -p /tmp/digests
-          echo "${{ steps.build.outputs.digest }}" > "/tmp/digests/${{ matrix.group }}.digest"
-          echo "digest: $(cat "/tmp/digests/${{ matrix.group }}.digest")"
-      - name: Upload digest
+          mkdir -p /tmp/digests/wheelhouse /tmp/digests/runtime
+          echo "${{ steps.wheelhouse.outputs.digest }}" > "/tmp/digests/wheelhouse/${{ matrix.group }}.digest"
+          echo "${{ steps.runtime.outputs.digest }}" > "/tmp/digests/runtime/${{ matrix.group }}.digest"
+          echo "wheelhouse ${{ matrix.group }}: $(cat "/tmp/digests/wheelhouse/${{ matrix.group }}.digest")"
+          echo "runtime    ${{ matrix.group }}: $(cat "/tmp/digests/runtime/${{ matrix.group }}.digest")"
+      - name: Upload wheelhouse digest
         if: env.PUBLISH == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: digests-${{ inputs.variant }}-${{ matrix.group }}
-          path: /tmp/digests/*.digest
+          name: digest-wheelhouse-${{ matrix.group }}
+          path: /tmp/digests/wheelhouse/*.digest
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload runtime digest
+        if: env.PUBLISH == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-runtime-${{ matrix.group }}
+          path: /tmp/digests/runtime/*.digest
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload wheelhouse
+        if: env.PUBLISH != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          # artifact 名带架构组，避免多组互相覆盖；内容是 dist 整棵树
+          # （多平台导出会按平台分子目录）
+          name: wheelhouse-${{ inputs.line }}-${{ matrix.group }}
+          path: dist
           retention-days: 1
           if-no-files-found: error
 
-  # 每个平台一个 job：从构建缓存重建单平台镜像（命中缓存 = 秒级），在该架构上真跑。
+  # 每个平台一个 job：直接跑使用者拿到的那个 runtime 镜像。
   # 与构建解耦后，构建失败与运行时失败是两种独立信号，产物也能单独构建用于调试
   smoke:
     needs: [plan, build]
-    name: Smoke ${{ matrix.platform }} (${{ matrix.ocr }})
+    name: Smoke ${{ matrix.platform }} (${{ inputs.line }})
     runs-on: ${{ matrix.runner }}
+    # 本机架构是秒级；QEMU 下 import + TLS 握手要放大十几倍，留足余量
     timeout-minutes: 90
     if: ${{ needs.plan.outputs.skip != 'true' && needs.build.result == 'success' }}
     permissions:
@@ -370,66 +345,122 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.smoke_matrix) }}
     steps:
       - name: Checkout
+        # 冒烟脚本本体在仓库里（tests/smoke.py），经 stdin 喂进容器执行
         uses: actions/checkout@v4
       - name: Set up QEMU
+        # 冒烟容器要按目标架构真跑（riscv64 / loong64 在 x86 runner 上全靠 binfmt）
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
+        if: env.PUBLISH != 'true'
         uses: docker/setup-buildx-action@v3
       - name: Compose build args
+        if: env.PUBLISH != 'true'
         id: args
-        # 只在该输入非空时传 PYCURL_VERSION：直接传空串会把 Dockerfile 里的默认值覆盖成空，
-        # 变成 `pip install "pycurl=="`。build 与 smoke 必须产出完全相同的 build-args，
-        # 否则缓存 scope 命中不了，冒烟阶段会退化成全量重编译
         env:
           V: ${{ inputs.pycurl_version }}
+          A: ${{ inputs.alpine_version }}
+          BASE_IMAGE: ${{ matrix.base_image }}
         run: |
-          if [ -n "$V" ]; then
-            echo "args=PYCURL_VERSION=$V" >> "$GITHUB_OUTPUT"
-          else
-            echo "args=" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Materialize image from cache (${{ matrix.platform }})
+          set -euo pipefail
+          {
+            echo "args<<__BUILD_ARGS__"
+            [ -z "$V" ] || echo "PYCURL_VERSION=$V"
+            [ -z "$A" ] || echo "ALPINE_VERSION=$A"
+            [ -z "$BASE_IMAGE" ] || echo "BASE_IMAGE=$BASE_IMAGE"
+            echo "__BUILD_ARGS__"
+          } >> "$GITHUB_OUTPUT"
+      - name: Download runtime digest
+        if: env.PUBLISH == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: digest-runtime-${{ matrix.group }}
+          path: /tmp/digest
+      - name: Fetch runtime image from registry
+        if: env.PUBLISH == 'true'
+        # 发布模式下验的就是 registry 里那份字节，而不是构建机上残留的临时镜像
+        run: |
+          set -eux
+          DIGEST=$(cat /tmp/digest/*.digest)
+          docker pull --platform "${{ matrix.platform }}" "${IMAGE}@${DIGEST}"
+          docker tag "${IMAGE}@${DIGEST}" "smoke:${{ matrix.arch }}"
+          docker image inspect -f '{{.Id}}' "smoke:${{ matrix.arch }}"
+      - name: Build runtime image
+        if: env.PUBLISH != 'true'
+        # 非发布模式没有 registry 可拉，就地按同一个 target 构建并装进本地 docker。
+        # build 阶段命中 build job 导出的 gha 缓存，不会重跑编译
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./${{ matrix.file }}
+          target: runtime
           platforms: ${{ matrix.platform }}
           load: true
-          push: false
-          tags: pycurl-smoke:test
-          provenance: false
+          tags: smoke:${{ matrix.arch }}
           build-args: ${{ steps.args.outputs.args }}
-          # build-args 必须与 build 阶段一致，否则缓存不命中会退化成全量重编译
-          cache-from: type=gha,scope=pycurl-${{ inputs.variant }}-${{ matrix.group }}
-      # 脚本经 stdin 喂进容器（python3 -），不进镜像、不加层、不依赖 bind mount
-      - name: Run smoke (${{ inputs.smoke_role }}/${{ matrix.ocr }})
+          provenance: false
+          cache-from: |
+            type=gha,scope=pycurl-${{ inputs.line }}-${{ matrix.group }}${{ inputs.cache_bust }}
+            type=gha,scope=pycurl-${{ inputs.line }}-${{ matrix.group }}-runtime${{ inputs.cache_bust }}
+          cache-to: type=gha,mode=max,scope=pycurl-${{ inputs.line }}-${{ matrix.group }}-runtime${{ inputs.cache_bust }},ignore-error=true
+      - name: Run smoke (${{ inputs.line }})
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          ROLE: ${{ inputs.line }}
+        # smoke.py 会验：环境架构、/wheels 残留、git、pycurl 版本与 HTTP3 特性位、
+        # pycurl.libs 自包含、无 OCR 栈、全部原生产物的 ELF 架构、一次真实 HTTPS 请求，
+        # ja3 线再加 IMPERSONATE 与本地抓包自算的 ja3n
         run: |
-          docker run --rm -i --platform ${{ matrix.platform }} pycurl-smoke:test \
-            python3 - ${{ inputs.smoke_role }} ${{ matrix.ocr }} ${{ matrix.platform }} < tests/smoke.py
+          set -euo pipefail
+          docker run --rm -i --platform "$PLATFORM" "smoke:${{ matrix.arch }}" \
+            python3 - "$ROLE" "$PLATFORM" < tests/smoke.py
 
   publish:
     needs: [plan, build, smoke]
     name: Merge digests and publish
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # 闸门：① 有发布意图 ② 无任何失败（冒烟失败 = 不发布）③ 平台集合完整
-    if: ${{ (inputs.push || startsWith(github.ref, 'refs/tags/')) && !cancelled() && !contains(needs.*.result, 'failure') && needs.plan.outputs.skip != 'true' }}
+    # 闸门（fail-closed）：① 有发布意图 ② build 与 smoke 都成功（任何一个失败/取消都不发布，
+    # 也不做「部分成功就先发一半」）③ 平台集合完整（见下一步）
+    if: ${{ (inputs.push || startsWith(github.ref, 'refs/tags/')) && !cancelled() && needs.build.result == 'success' && needs.smoke.result == 'success' && needs.plan.outputs.skip != 'true' }}
     permissions:
       contents: read
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
       - name: Guard - reject partial publish
         if: ${{ needs.plan.outputs.full != 'true' }}
         run: |
-          echo "::error::平台子集（${{ needs.plan.outputs.expected }}）不是该变体的完整平台集合，禁止发布。"
+          echo "::error::平台子集（${{ needs.plan.outputs.expected }}）不是该线的完整平台集合，禁止发布。"
           echo "::error::用子集发布会把多平台正式 manifest 覆盖成不完整版本。"
           echo "::error::要发布请留空 platforms 走全平台构建。"
           exit 1
-      - name: Download digests
+      - name: Download wheelhouse digests
         uses: actions/download-artifact@v4
         with:
-          pattern: digests-${{ inputs.variant }}-*
-          path: /tmp/digests
+          pattern: digest-wheelhouse-*
+          path: /tmp/digests/wheelhouse
           merge-multiple: true
+      - name: Download runtime digests
+        uses: actions/download-artifact@v4
+        with:
+          pattern: digest-runtime-*
+          path: /tmp/digests/runtime
+          merge-multiple: true
+      - name: Guard - digest completeness
+        env:
+          EXPECTED_GROUPS: ${{ needs.plan.outputs.groups }}
+        # artifact 跨 job 传递，缺一个架构组会静默合并出残缺 index，合并前按组数核对
+        run: |
+          set -euo pipefail
+          want=$(printf '%s' "$EXPECTED_GROUPS" | tr ',' '\n' | grep -c .)
+          for kind in wheelhouse runtime; do
+            got=$(find "/tmp/digests/$kind" -name '*.digest' | grep -c . || true)
+            echo "$kind: $got / $want digest"
+            if [ "$got" -ne "$want" ]; then
+              echo "::error::$kind 的 digest 不完整（${got} != ${want}），禁止发布"
+              exit 1
+            fi
+          done
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Login to Docker Hub
@@ -440,67 +471,49 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
       - name: Create multi-arch manifests
         env:
-          LATEST_TAG: ${{ inputs.latest_tag }}
+          LATEST_TAGS: ${{ inputs.latest_tags }}
+          WHEELHOUSE_TAGS: ${{ inputs.wheelhouse_tags }}
           VERSION_PREFIX: ${{ inputs.version_prefix }}
+          LITE_VERSION_PREFIX: ${{ inputs.lite_version_prefix }}
+        # 同一条线的多个 tag 用**一次** imagetools create 挂上去：一个 manifest，多个别名。
+        # 分两次 create 会得到两个内容相同但 digest 不同的 manifest，`latest` 与
+        # `lite-latest` 就不再是「同一个镜像」。
         run: |
           set -euo pipefail
-          SRCS=""
-          for f in /tmp/digests/*.digest; do
-            SRCS="$SRCS docker.io/a76yyyy/pycurl@$(cat "$f")"
-          done
-          echo "聚合来源:${SRCS}"
 
-          TAGS="${LATEST_TAG}"
-          # 版本 tag 只在 tag 事件产出；dispatch 时 ref_name 是分支名，推出去会污染 Hub
-          if [ "${{ startsWith(github.ref, 'refs/tags/') }}" = "true" ]; then
-            TAGS="$TAGS ${VERSION_PREFIX}${{ github.ref_name }}"
-          fi
-          for TAG in $TAGS; do
-            echo "::group::合并 -> a76yyyy/pycurl:${TAG}"
-            docker buildx imagetools create -t "docker.io/a76yyyy/pycurl:${TAG}" $SRCS
+          merge_one() {
+            dir="$1"; shift
+            SRCS=""
+            for f in "$dir"/*.digest; do
+              SRCS="$SRCS ${IMAGE}@$(cat "$f")"
+            done
+            TAGS=""
+            for t in "$@"; do
+              TAGS="$TAGS -t ${IMAGE}:${t}"
+            done
+            echo "::group::合并 ${dir} ->${TAGS}"
+            docker buildx imagetools create ${TAGS} ${SRCS}
             echo "::endgroup::"
-          done
-          echo "TAGS=$TAGS" >> "$GITHUB_ENV"
+          }
+
+          # 版本 tag 只在 tag 事件产出；dispatch 时 ref_name 是分支名，推出去会污染 Hub
+          VERSION_TAGS=""
+          WH_VERSION_TAG=""
+          if [ "${{ startsWith(github.ref, 'refs/tags/') }}" = "true" ]; then
+            VERSION_TAGS="${VERSION_PREFIX}${GITHUB_REF_NAME} ${LITE_VERSION_PREFIX}${GITHUB_REF_NAME}"
+            WH_VERSION_TAG="${VERSION_PREFIX}${GITHUB_REF_NAME}-wheelhouse"
+          fi
+
+          merge_one /tmp/digests/wheelhouse ${WHEELHOUSE_TAGS} ${WH_VERSION_TAG}
+          merge_one /tmp/digests/runtime ${LATEST_TAGS} ${VERSION_TAGS}
+
+          ALL_TAGS="${WHEELHOUSE_TAGS} ${LATEST_TAGS} ${VERSION_TAGS} ${WH_VERSION_TAG}"
+          ALL_TAGS=$(printf '%s\n' ${ALL_TAGS} | awk '!seen[$0]++' | tr '\n' ' ')
+          echo "TAGS=${ALL_TAGS}" >> "$GITHUB_ENV"
+          echo "最终标签：${ALL_TAGS}"
       - name: Verify manifest platform completeness
         env:
           EXPECTED: ${{ needs.plan.outputs.expected }}
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import json, os, subprocess, sys
-
-          expected = {p.strip() for p in os.environ["EXPECTED"].split(",") if p.strip()}
-
-          def platforms(tag):
-              try:
-                  raw = subprocess.run(
-                      ["docker", "buildx", "imagetools", "inspect", "--raw", tag],
-                      capture_output=True, text=True, check=True).stdout
-              except subprocess.CalledProcessError as e:
-                  raise SystemExit("::error::无法读取 %s 的 manifest: %s"
-                                   % (tag, (e.stderr or "").strip()[:300]))
-              idx = json.loads(raw)
-              out = set()
-              for m in idx.get("manifests", []):
-                  p = m.get("platform") or {}
-                  arch = p.get("architecture")
-                  if not arch or arch == "unknown":
-                      continue
-                  variant = p.get("variant")
-                  out.add("%s/%s%s" % (p.get("os", "linux"), arch, "/" + variant if variant else ""))
-              return out
-
-          failed = False
-          for tag in os.environ["TAGS"].split():
-              full = "docker.io/a76yyyy/pycurl:" + tag
-              got = platforms(full)
-              if got == expected:
-                  print("OK   %s -> %d 平台" % (tag, len(got)))
-                  continue
-              failed = True
-              print("FAIL %s" % full)
-              print("     缺失: %s" % (sorted(expected - got) or "无"))
-              print("     多余: %s" % (sorted(got - expected) or "无"))
-          if failed:
-              sys.exit("::error::manifest 平台完整性校验失败")
-          PY
+          python3 .github/workflows/scripts/verify_manifests.py

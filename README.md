@@ -1,27 +1,30 @@
 # pycurl Docker 镜像（Alpine）
 
-基于 Alpine 的 pycurl 镜像。同一仓库四条发布线，按需选择：
-
-| 标签 | 内容 |
-|---|---|
-| `latest` | pycurl + ddddocr / onnxruntime，自编 OpenSSL 与 ngtcp2 / nghttp3 |
-| `ja3-latest` | 在 `latest` 基础上换成 curl-impersonate + BoringSSL，提供 TLS 指纹伪装 |
-| `lite-latest` | 仅 pycurl，Alpine 原生 OpenSSL，不含 OCR |
-| `ja3-lite-latest` | `lite` 的基座 + curl-impersonate，有指纹伪装、无 OCR |
+pycurl 的 musllinux wheel 分发，另附装好的可运行镜像。两条构建线：不含 TLS 指纹伪装（`latest`）
+与含（`ja3-latest`）。镜像里不含 OCR —— ddddocr / onnxruntime 由上层从各自的 wheelhouse 装。
 
 - Docker Hub：<https://hub.docker.com/r/a76yyyy/pycurl>
 - 源码：[qd-today/pycurl-docker](https://github.com/qd-today/pycurl-docker)
 
-四条线都支持 TLS 1.3、HTTP/3（QUIC）、zstd 与 brotli；`latest` 与 `ja3-latest` 另带
-ddddocr 与 onnxruntime。
+## 标签
+
+| 标签 | 内容 |
+|---|---|
+| `latest`、`lite-latest` | **同一个 manifest**：pycurl + 自编 curl + OpenSSL + ngtcp2/nghttp3 |
+| `<ver>`、`lite-<ver>` | 同上，按发布版本固定 |
+| `ja3-latest`、`ja3-lite-latest` | **同一个 manifest**：pycurl（含 `IMPERSONATE`）+ curl-impersonate + BoringSSL |
+| `ja3-<ver>`、`ja3-lite-<ver>` | 同上，按发布版本固定 |
+| `wheelhouse`、`<ver>-wheelhouse` | `scratch` + `/wheels`：不含指纹伪装那条线的 wheel 载体 |
+| `ja3-wheelhouse`、`ja3-<ver>-wheelhouse` | 同上，含指纹伪装 |
+
+`lite` 曾是「不含 OCR」的独立镜像；OCR 移出后两者内容一致，因此合并为一个 manifest、两个标签别名。
+`<ver>` 只在 tag 推送时产出；workflow_dispatch 只更新滚动标签。
 
 ## 快速开始
 
 ```bash
-docker pull a76yyyy/pycurl:latest      # 或 ja3-latest / lite-latest / ja3-lite-latest
+docker pull a76yyyy/pycurl:latest        # 或 ja3-latest
 ```
-
-在 Python 中使用（四个标签一致）：
 
 ```python
 import pycurl
@@ -34,232 +37,199 @@ c.perform()
 print(c.getinfo(pycurl.RESPONSE_CODE), len(body))
 ```
 
-以本镜像为基础（`latest` 与 `ja3-latest` 已包含 ddddocr，可直接 `import ddddocr`）：
+以本镜像为基础：
 
 ```dockerfile
 FROM a76yyyy/pycurl:latest
 ```
 
+从 wheelhouse 装（可挂任意目录，`/w/simple` 是 PEP 503 索引）：
+
+```dockerfile
+# syntax=docker/dockerfile:1
+FROM alpine:3.24
+RUN --mount=type=bind,from=a76yyyy/pycurl:1.5.2-wheelhouse,source=/wheels,target=/w \
+    apk add --no-cache $(cat /w/system-packages.txt) uv && \
+    uv pip install --system --break-system-packages --no-cache \
+        --index-url https://pypi.org/simple \
+        --extra-index-url file:///w/simple \
+        "pycurl==7.48.0"
+```
+
+多个 wheelhouse 叠加：
+
+```dockerfile
+ENV UV_EXTRA_INDEX_URL="file:///w/a/simple file:///w/b/simple"
+```
+
+`RUN --mount` 需要 BuildKit（首行 `# syntax=docker/dockerfile:1`）；Kaniko 等不支持时用
+`COPY --from=<wheelhouse> /wheels /wheels`，代价是 `/wheels` 会进镜像层，且 `rm` 删不掉。
+
 ## 镜像内容
 
-| 组件 | latest | ja3-latest | lite-latest | ja3-lite-latest |
-|---|---|---|---|---|
-| 基础镜像 | `a76yyyy/ddddocr:1.6.1` | `a76yyyy/ddddocr:1.6.1` | `alpine:3.24` | `alpine:3.24` |
-| Python | 3.14 | 3.14 | 3.14 | 3.14 |
-| curl | 8.23.0（自编） | curl-impersonate（固定 commit `df38987`，基于 curl 8.23.0） | 8.23.0（自编） | 同 ja3-latest |
-| TLS 库 | OpenSSL 3.5.9 LTS（自编） | BoringSSL（随 curl-impersonate 的固定 commit） | OpenSSL 3.5.9 LTS（Alpine 包） | BoringSSL |
-| HTTP/3 后端 | ngtcp2 1.25.0 + nghttp3 1.18.0 | ngtcp2 + BoringSSL | 同 latest | ngtcp2 + BoringSSL |
-| pycurl | 7.48.0（`PYCURL_VERSION` 可覆盖） | 7.48.0 + `patches/pycurl-impersonate.patch` | 7.48.0（`PYCURL_VERSION` 可覆盖） | 同 ja3-latest |
-| OCR | ddddocr 1.6.1 + onnxruntime 1.24.4 + Pillow 13.0.0 | 同 latest | 无 | 无 |
+| 组件 | `latest` / `lite-latest` | `ja3-latest` / `ja3-lite-latest` |
+|---|---|---|
+| 基础镜像 | `alpine:3.24`；loong64 为 `ghcr.io/loong64/alpine:3.24` | `alpine:3.24` |
+| Python | 3.14 | 3.14 |
+| curl | 8.23.0（自编） | curl-impersonate（固定 commit `df38987`，基于 curl 8.23.0） |
+| TLS 库 | OpenSSL 3.5.9（Alpine 包，随 wheel 一起打进去） | BoringSSL（随 curl-impersonate 静态链接） |
+| HTTP/3 后端 | ngtcp2 1.25.0 + nghttp3 1.18.0（自编） | ngtcp2 + BoringSSL |
+| pycurl | 7.48.0 | 7.48.0 + `patches/pycurl-impersonate.patch`（`pycurl.IMPERSONATE`） |
+| 包管理器 | `uv` | `uv` |
+| C 依赖位置 | `site-packages/pycurl.libs/` | 同左 |
+| OCR | 无 | 无 |
 
-OpenSSL 3.5 是 LTS（支持至 2030-04），原生提供 QUIC API，ngtcp2 v1.12.0 起可直接对接，
-因此不需要已停止维护的 quictls fork。
-
-## TLS 指纹伪装（ja3-latest）
-
-基于 [lexiforest/curl-impersonate](https://github.com/lexiforest/curl-impersonate) 的 superbuild
-（固定 commit `df38987`，构建脚本里的 `CURL_IMPERSONATE_REF` 可覆盖），浏览器指纹覆盖
-Chrome 151/152、Safari 27、Firefox 153–155（含 ECH、ZSTD、PQC 与 HTTP/3 指纹）。
-
-命令行：镜像内的 `curl` 默认以 chrome152 发起请求，也可显式指定目标或使用其它包装脚本。
-
-```bash
-curl https://tls.browserleaks.com/json
-curl-impersonate --impersonate chrome152 --http3 https://www.example.com
-curl_safari270 https://www.example.com
-```
-
-pycurl：`pycurl.IMPERSONATE` 由补丁提供，一行开启完整浏览器指纹。
-
-```python
-import pycurl
-
-c = pycurl.Curl()
-c.setopt(pycurl.URL, "https://tls.browserleaks.com/json")
-c.setopt(pycurl.IMPERSONATE, "chrome152")   # 等价于 CLI 的 --impersonate chrome152
-c.perform()
-```
-
-指纹目标会自动配置 TLS 套件、曲线、扩展、ALPN、HTTP/2 settings 与浏览器请求头，无需手动
-复刻；补丁同时清掉 pycurl 构造时强设的默认 User-Agent，使指纹自带的 UA 生效。要自定义 UA，
-在其后 `setopt(pycurl.USERAGENT, ...)` 覆盖即可。
-
-两点限制：
-
-- chrome152 等指纹启用 `tls_permute_extensions`，TLS 扩展顺序逐连接随机置换，因此
-  **ja3_hash 每次请求都不同**（命令行同样如此）。比对指纹请用 ja3n_hash，即扩展排序归一化
-  后的稳定值。
-- BoringSSL 未提供 `SSL_CTX_set_ciphersuites()`，本线的 `pycurl.TLS13_CIPHERS` 恒返回
-  `CURLE_NOT_BUILT_IN`——TLS 1.3 套件由 impersonate 目标内部配置，无需也无法手动设置。
-  若不能使用打过补丁的 pycurl，可用 ctypes 直调 `curl_easy_setopt(handle, 10999, b"chrome152")`，
-  10999 即 `CURLOPT_IMPERSONATE`。
+两条线的 `import pycurl` 都只依赖解释器与 wheel 自带的库；`pycurl.libs/` 里是
+`libcurl`、`libssl`/`libcrypto`（或 `libcurl-impersonate`、`libstdc++`）、`ngtcp2`、`nghttp3`、
+`nghttp2`、`libidn2`、`libpsl`、`libbrotli`、`libzstd`、`c-ares` 与 GSSAPI 链。
 
 ## 支持的平台
 
-| 平台 | latest | ja3-latest | lite-latest | ja3-lite-latest |
-|---|---|---|---|---|
-| linux/amd64 | ✓ | ✓ | ✓ | ✓ |
-| linux/386 | ✓ | ✓ | ✓ | ✓ |
-| linux/arm64 | ✓ | ✓ | ✓ | ✓ |
-| linux/arm/v7 | ✓ | ✓ | ✓ | ✓ |
-| linux/arm/v6 | ✓ | ✓ | ✓ | ✓ |
-| linux/ppc64le | ✓ | — | ✓ | — |
-| linux/riscv64 | ✓ | ✓ | ✓ | ✓ |
-| linux/s390x | ✓ | — | ✓ | — |
-| linux/loong64 | ✓ | — | ✓ | — |
+| 平台 | `latest` | `ja3-latest` |
+|---|---|---|
+| `linux/amd64` | ✓ | ✓ |
+| `linux/386` | ✓ | ✓ |
+| `linux/arm64` | ✓ | ✓ |
+| `linux/arm/v7` | ✓ | ✓ |
+| `linux/arm/v6` | ✓ | ✓ |
+| `linux/riscv64` | ✓ | ✓ |
+| `linux/ppc64le` | ✓ | — |
+| `linux/s390x` | ✓ | — |
+| `linux/loong64` | ✓ | — |
 
-ja3 与 ja3-lite 的平台范围由 BoringSSL 决定，而非 Dockerfile 的选择。BoringSSL 在
-`include/openssl/target.h` 的官方架构清单只有 x86 / x86_64 / aarch64 / arm / mips64 /
-riscv64 / pnacl / wasm / asmjs / myriad2，因此：
+ja3 线的平台范围由 BoringSSL 决定：`include/openssl/target.h` 的官方架构清单只有 x86 / x86_64 /
+aarch64 / arm / mips64 / riscv64 等，因此：
 
-- **ppc64le**：不在清单内。上游有移植 PR（#231）但未合并，且其构建方式已与当前
-  superbuild 不一致；自行给 `target.h` 打补丁虽能编过，却要长期维护对加密库的源码补丁、
-  每次升级 curl-impersonate 都需重新核对，因此不纳入发布。需要时可用 `workflow_dispatch`
-  指定 `platforms=linux/ppc64le` 手工构建，不承诺可用。
-- **s390x**：大端，BoringSSL 官方明确不支持（`target.h` 原文 “Functions will not produce
-  the correct answer on other systems”）。上游有大端移植 PR（#343），未合并且当前无法构建。
-- **loong64**：BoringSSL 没有 loongarch 条目，上游也没有相关 PR。
+| 平台 | 原因 |
+|---|---|
+| `linux/ppc64le` | BoringSSL 无 ppc64le 目标；上游移植 PR (#231) 未合并 |
+| `linux/s390x` | 大端，BoringSSL 明确不支持 |
+| `linux/loong64` | BoringSSL 无 loongarch 条目 |
 
-`latest` 与 `lite-latest` 使用 OpenSSL，不受上述限制；qd 在 ppc64le / s390x / riscv64 上可正常
-运行，只是用不到 TLS 指纹伪装。
+loong64 构建需 `--build-arg BASE_IMAGE=ghcr.io/loong64/alpine:3.24`（官方 alpine 无此架构，CI 会自动注入）。
 
 ## 镜像体积
 
 以 arm64 为例：
 
-| 线 | 首次拉取 | 占用磁盘 | 容器内 |
+| 镜像 | 首次拉取 | 占用磁盘 | 容器内 |
 |---|---|---|---|
-| `latest` | 161 MB | 502 MB | 335 MB |
-| `ja3-latest` | 180 MB | 557 MB | 376 MB |
-| `lite-latest` | 28 MB | 108 MB | 80 MB |
-| `ja3-lite-latest` | 55 MB | 199 MB | 145 MB |
+| `wheelhouse`（`/wheels`，6.7 MB wheel） | 6.4 MiB | 13 MB | 6.7 MB |
+| `ja3-wheelhouse`（`/wheels`，23.9 MB wheel） | 22.7 MiB | 48 MB | 23.9 MB |
+| `latest` | 36.6 MiB | 141 MB | 98 MB（site-packages 17 MB） |
+| `ja3-latest` | 53.2 MiB | 201 MB | 138 MB（site-packages 58 MB） |
 
-多架构镜像只下载你所在架构的那一份。差异主要来自基座：`latest` 与 `ja3-latest`
-基于 ddddocr（带 OCR 栈），另外两条是纯 Alpine——只要 pycurl 时选后两条，体积小 3–6 倍。
+`占用磁盘` 取 `docker images` 口径：containerd 计入解压层与压缩 blob 两份。
 
-## 标签
+ja3 线更大的原因：BoringSSL 以静态库形式同时进入 `libcurl-impersonate`（28 MB）与 pycurl 扩展
+（26 MB），两者各带一份。
 
-| 标签 | 含义 |
+## 产物
+
+```
+/wheels/
+  pycurl-<ver>-cpXXX-cpXXX-musllinux_1_2_<arch>.whl
+  SHA256SUMS
+  system-packages.txt
+  simple/
+    index.html
+    pycurl/index.html        # href="../../<wheel>#sha256=<hex>"
+```
+
+`system-packages.txt` 是需要 `apk add` 的运行时包，一行一个（本仓库为 `python3`、
+`ca-certificates`）。判定依据是 wheel 里 ELF 的 `DT_NEEDED` 闭包：除 musl 的 `libc` 与
+`libz.so.1` 外全部被 `auditwheel` 收进 `pycurl.libs/`，而 `libz.so.1` 由 `python3` 包的
+依赖 `zlib` 带入；`ca-certificates` 不是库，是 TLS 的信任链（基础镜像自带
+`ca-certificates-bundle`，这里显式列出以免换到更瘦的基座后静默失去证书校验）。
+
+`simple/` 由 `src/pack_wheel.py --emit-index` 生成，链接是相对路径，可与其他 wheel 目录一起
+挂到任意位置。
+
+| wheel 标签 | 含义 |
 |---|---|
-| `latest`、`ja3-latest`、`lite-latest`、`ja3-lite-latest` | 四条线各自的最新构建 |
-| `<版本>`、`ja3-<版本>`、`lite-<版本>`、`ja3-lite-<版本>` | 版本号标签，与仓库发布版本对齐 |
-
-发布由 tag 推送触发，四条线各自构建全平台并合并 manifest；日常验证走 workflow_dispatch，
-默认不推送任何镜像。
+| `musllinux_1_2_<arch>` | 在 musl ≥ 1.2 上构建，除 musl 外不依赖系统库 |
+| `linux_<arch>` | 只说明 CPU 架构，不是最终产物 |
 
 ## 构建
 
-四个 Dockerfile 对应四条线：`Dockerfile`（latest）、`Dockerfile.ja3`（ja3-latest）、
-`Dockerfile.lite`（lite-latest）、`Dockerfile.ja3.lite`（ja3-lite-latest）。
-
-派生文件只换基座、其余与基准逐字相同，CI 会校验这一点：
-`Dockerfile.ja3.lite` 取自 `Dockerfile.ja3`，`Dockerfile.lite.loong64` 取自 `Dockerfile.lite`。
-
-`latest` 与 `lite` 自编 curl，配置项一致：
-
 ```bash
-LDFLAGS="-Wl,-rpath,/usr/lib" ./configure \
-    --with-openssl=/usr \
-    --with-nghttp2=/usr \
-    --with-nghttp3=/usr \
-    --with-ngtcp2=/usr \
-    --prefix=/usr \
-    --enable-ipv6 \
-    --enable-unix-sockets \
-    --with-libidn2 \
-    --disable-static \
-    --disable-ldap \
-    --with-pic \
-    --with-gssapi \
-    --enable-ares
+# wheelhouse 内容（/wheels）
+docker buildx build --platform linux/arm64 --target wheel \
+    --output type=local,dest=./dist .
+
+# 可运行镜像
+docker buildx build --platform linux/arm64 --target runtime \
+    -t pycurl:latest .
+
+# 含指纹伪装的那条线
+docker buildx build --platform linux/arm64 --target wheel -f Dockerfile.ja3 \
+    --output type=local,dest=./dist/ja3 .
 ```
 
-`ja3` 线的 curl 由 curl-impersonate 的 superbuild 产出，配置由上游决定。
-
-pycurl 版本由 `PYCURL_VERSION` 构建参数固定（默认 7.48.0），四条线一致；需要其它版本时
-`--build-arg PYCURL_VERSION=x.y.z`，与 `APK_MIRROR` / `PIP_MIRROR` 一起传入即可。
-
-三个构建参数留空即与 CI 行为一致，国内构建可按下表覆盖：
-
-| 参数 | 作用 | 国内构建时的示例 |
+| 参数 | 默认 | 说明 |
 |---|---|---|
-| `APK_MIRROR` | apk 包源 | `https://mirrors.tuna.tsinghua.edu.cn` |
-| `PIP_MIRROR` | pip 索引（pycurl sdist 也走它） | `https://pypi.tuna.tsinghua.edu.cn/simple` |
-| `GIT_DOMAIN` | 源码 clone 的 GitHub 前缀，覆盖 openssl / nghttp3 / ngtcp2 / curl-impersonate | `https://gh-proxy.com/https://github.com` |
-| `BASE_IMAGE` | 基座镜像。默认已固定 tag（`a76yyyy/ddddocr:1.6.1`，lite 线为 `alpine:3.24`），需要换基座时才覆盖 | `a76yyyy/ddddocr:1.6.1` |
+| `ALPINE_VERSION` | `3.24` | 决定 Python 版本与 wheel 的 `cpXX` tag |
+| `BASE_IMAGE` | `alpine:${ALPINE_VERSION}` | loong64 传 `ghcr.io/loong64/alpine:3.24` |
+| `PYCURL_VERSION` | `7.48.0` | 与 wheel 名、`SHA256SUMS` 一致 |
+| `CURL_VERSION` | `8.23.0` | 仅 `Dockerfile` |
+| `NGTCP2_VERSION` / `NGHTTP3_VERSION` | `1.25.0` / `1.18.0` | 仅 `Dockerfile` |
+| `CURL_IMPERSONATE_REF` | `df38987…` | 仅 `Dockerfile.ja3`；上游已删 v2.4.0 标签，固定 commit |
+| `AUDITWHEEL_VERSION` | `6.8.2` | 依赖收集与打标 |
+| `APK_MIRROR` | 空 | 本地加速用，如 `https://mirrors.tuna.tsinghua.edu.cn` |
+| `PIP_MIRROR` | 空 | 安装 auditwheel / 取 pycurl sdist 用；空 = 官方 PyPI |
+| `GIT_DOMAIN` | `https://github.com` | 源码 clone 前缀（ngtcp2 / nghttp3 / curl-impersonate） |
 
-```bash
-docker buildx build --platform linux/ppc64le \
-  --build-arg APK_MIRROR=https://mirrors.tuna.tsinghua.edu.cn \
-  --build-arg PIP_MIRROR=https://pypi.tuna.tsinghua.edu.cn/simple \
-  --build-arg GIT_DOMAIN=https://gh-proxy.com/https://github.com \
-  -f Dockerfile -t pycurl:test . --load
+国内构建三个镜像参数一起给：apk 与 pip 走镜像，源码 clone 走 `GIT_DOMAIN`。只给前两个时构建仍会
+卡在从 GitHub 拉源码。
+
+## TLS 指纹（ja3 线）
+
+`pycurl.IMPERSONATE` 由 `patches/pycurl-impersonate.patch` 提供（选项号 10999），一行开启完整
+浏览器指纹；补丁同时清掉 pycurl 构造时强设的默认 User-Agent，使指纹自带的 UA 生效。
+
+```python
+import pycurl
+
+c = pycurl.Curl()
+c.setopt(pycurl.URL, "https://example.com")
+c.setopt(pycurl.IMPERSONATE, "chrome152")
+c.perform()
 ```
 
-国内构建建议三个参数一起给：apk 与 pip 走镜像，源码 clone 走 `GIT_DOMAIN`。只给前两个时，
-构建仍会卡在从 GitHub 拉 openssl / nghttp3 / ngtcp2 / curl-impersonate。
+指纹目标覆盖 Chrome 151/152、Safari 27、Firefox 153–155（含 ECH、ZSTD、PQC 与 HTTP/3 指纹），
+由 curl-impersonate 的 target 配置决定 TLS 套件、曲线、扩展、ALPN 与 HTTP/2 settings。要自定义 UA，
+在其后 `setopt(pycurl.USERAGENT, ...)` 覆盖。
 
----
+## 已知限制
+
+- 镜像不含 `curl` 命令行，只有 pycurl。需要 CLI 时 `apk add curl`（那是 Alpine 的 libcurl，与 wheel
+  里那份不是同一个）。
+- wheel 的 `cp314` 与 `alpine:3.24` 的 Python 3.14 绑定；换 Python 小版本需要重新构建。
+- BoringSSL 未提供 `SSL_CTX_set_ciphersuites()`，ja3 线的 `pycurl.TLS13_CIPHERS` 恒返回
+  `CURLE_NOT_BUILT_IN`——TLS 1.3 套件由 impersonate target 内部配置。若不能用打过补丁的 pycurl，
+  可 `curl_easy_setopt(handle, 10999, b"chrome152")`（10999 即 `CURLOPT_IMPERSONATE`）。
+- chrome152 等 target 启用 `tls_permute_extensions`，TLS 扩展顺序逐连接随机置换，**ja3_hash 每次
+  请求都不同**；比对指纹请用扩展排序归一化后的 ja3n。
+- wheel 里只有 `ca-certificates` 提供的信任链，没有额外 CA；需要自定义 CA 时自行挂载并设
+  `pycurl.CAINFO`。
+- wheel 的 zip 条目带 mtime，构建不可逐字节复现；内容一致，`sha256` 每次不同。
+- 镜像不含 OCR；`import ddddocr` / `cv2` / `onnxruntime` 按预期失败。
+
+## 维护者
 
 <details>
-<summary>CI 架构（维护者）</summary>
+<summary>CI 结构</summary>
 
-四条线共用 `.github/workflows/_image.yml`（workflow_call），各自只有一个约 30 行的调用方，
-差异全部由 `with` 传入。
+两条线各一个调用方（`Build Image.yml` / `Build Ja3 Image.yml`），共用 `.github/workflows/_image.yml`，
+四段：plan → build → smoke → publish。矩阵与 manifest 校验脚本在 `.github/workflows/scripts/`。
 
-### 流水线
-
-```
-plan    按 dispatch 的 platforms 输入计算架构分组
-  ├─ build x86      (ubuntu-latest)     amd64(原生) + 386
-  ├─ build arm      (ubuntu-24.04-arm)  arm64(原生) + armv7 + armv6
-  ├─ build ppc64le  (ubuntu-latest)     ppc64le
-  ├─ build s390x    (ubuntu-latest)     s390x
-  ├─ build riscv64  (ubuntu-latest)     riscv64
-  └─ build loong64  (ubuntu-latest)     loong64（latest 与 lite 线）
-        ↓ 全部构建成功
-  smoke（每个平台一个 job）  复用构建层缓存重建镜像后逐平台实跑
-        ↓ 全部冒烟通过
-  publish  各架构组按 digest 合并成正式 tag → 校验 manifest 平台完整性
-```
-
-### 设计原则
-
-1. **发布即全绿**：`publish` 需要所有构建与所有冒烟成功，测试失败不产生 tag。
-2. **零重复编译**：构建阶段把层缓存写入 GHA cache（scope 按「线-架构组」隔离），冒烟与
-   发布阶段 `cache-from` 命中同一份缓存，同一次提交不重复编译。
-3. **不产临时 tag**：发布模式下各架构组以 `push-by-digest` 推到 Docker Hub（不带 tag），
-   `publish` 用 `imagetools create` 合并成正式多架构 tag。
-
-### 触发与跳过
-
-tag 推送始终全量构建。workflow_dispatch 会先比对「该分支最近一次成功运行的 commit」，
-按线判定是否需要重建：共享输入（`patches/`、`tests/`、`_image.yml`）改动重建全部；
-某个 Dockerfile 改动只重建对应那条线，派生文件跟着基准走（改 `Dockerfile.ja3` 会同时
-重建 ja3 与 ja3-lite）；只改文档、或同一 commit 已有成功运行则整体跳过。`force` 可强制重跑。
-
-### workflow_dispatch 输入
-
-| 输入 | 默认 | 说明 |
-|---|---|---|
-| `push` | false | 不勾选即只构建与冒烟，不发布任何镜像 |
-| `platforms` | 空（该条线的全部平台） | 平台子集用于加速迭代；子集构建默认禁止发布 |
-| `native_arm` | true | 用 `ubuntu-24.04-arm` 原生构建 arm64；该 runner 不可用时取消勾选回退 QEMU |
-| `pycurl_version` | 空（用 Dockerfile 默认值） | 指定 pycurl 版本 |
-| `force` | false | 强制重新构建，跳过「仅文档改动 / 同一 commit 已有成功运行」的判定 |
-
-### 冒烟
-
-`tests/smoke.py` 按线与 OCR 期望显式传参（ja3-lite 复用 ja3 角色）：
-
-```bash
-docker run --rm -i --platform <platform> <image> \
-  python3 - <main|ja3|lite> <ocr|nocr> <platform> < tests/smoke.py
-```
-
-- pycurl 可导入、libcurl 特性位含 HTTP/3、真实 HTTPS 请求成功
-- ja3 线额外在本地起 TCP 监听，直接读 ClientHello 计算 ja3n，与 chrome152 的期望值比对，
-  不依赖外部站点
-- 按目标平台校验原生产物（pycurl 扩展、libcurl、libssl）ELF 头中的 `e_machine`
+- 仅 `workflow_dispatch` 与 tag push 触发
+- 每架构组一个 job，一次构建两个出口（`wheel` 与 `runtime`）
+- 发布时两个出口各自 `push-by-digest`，artifact 按出口分名（`digest-wheelhouse-*` / `digest-runtime-*`）
+- 同一条线的多个别名（`latest` 与 `lite-latest`）由**一次** `imagetools create` 挂到同一个 manifest
+- 冒烟直接跑 runtime 镜像：`tests/smoke.py` 校验环境架构、`/wheels` 无残留、pycurl 版本与 HTTP/3
+  特性位、`pycurl.libs/` 自包含、无 OCR 栈、原生产物的 ELF `e_machine`、一次真实 HTTPS 请求；
+  ja3 线另加 `IMPERSONATE` 与本地抓包自算的 ja3n
+- 闸门 fail-closed：有发布意图 && build 与 smoke 均 `success` && 平台集合完整，才合并 manifest
 
 </details>

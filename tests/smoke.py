@@ -1,36 +1,40 @@
 #!/usr/bin/env python3
-"""pycurl 三个变体的统一冒烟入口。
+"""pycurl 两条构建线的统一冒烟入口。
 
-容器内以 stdin 执行，脚本不进镜像、不加层、不依赖 bind mount、不访问外网：
+容器内以 stdin 执行，脚本不进镜像、不加层、不依赖 bind mount：
 
-    docker run --rm -i --platform <platform> <image> python3 - <role> [ocr|nocr] [platform] < tests/smoke.py
+    docker run --rm -i --platform <platform> <image> python3 - <role> <platform> < tests/smoke.py
 
-    role: main | ja3 | lite      —— 变体自身的固有能力要求
-    argv2: ocr | nocr            —— 该平台上是否应该有 OCR 栈（默认 ocr）
+    role: main（不含 IMPERSONATE） | ja3（含 IMPERSONATE）
 
-两个维度分开传，因为它们是独立的：ja3 变体也有 386/armv6 这种「pycurl 完整、
-但基座 ddddocr 是空壳」的平台组合。
+脚本跑在**最终 runtime 镜像**里（不是在干净 alpine 里重装 wheel），所以通过就同时证明两件
+事：wheelhouse 里的 wheel 在只装了 system-packages.txt 的环境里能装，以及镜像本身可运行。
 
-为什么只有一个文件：三个变体的检查项高度重叠（pycurl 能否 import、libcurl 是否带
-HTTP3、是否被意外塞进 OCR 依赖），拆成三份会让公共部分各写一遍并逐渐漂移。
-差异用参数表达，而不是用文件数量表达。
+检查项各自防一类回归：
 
-为什么 ja3 检查不联网：原来的实现请求 tls.browserleaks.com 读回 ja3n，等于把
-发布闸门交给第三方可用性。现在改为本地起一个 TCP 监听，直接从 socket 读
-ClientHello 原始字节，用纯标准库解析出 cipher/extension/curve 列表后自算 ja3/ja3n。
-期望值 bd4930bd9b000ee684830e44bab76fdf 已双向验证：既等于 browserleaks 对
-chrome152 的返回值，也等于本实现的离线计算结果（且裸 libcurl 为 4fd7cab6...
-说明指纹确实被 impersonate 改写）。
+1. 无 /wheels、/w 残留 —— wheelhouse 只该在构建期 bind mount，装完即随 layer 消失；
+2. pycurl 可 import、libcurl 特性位含 HTTP/3 —— 编译期缺失（ngtcp2/nghttp3 没接上）在这里暴露；
+3. 依赖自包含 —— pycurl.libs/ 收进了 libcurl，且系统里没有 libcurl，说明 wheel 不依赖系统库；
+4. 无 OCR 栈 —— 镜像不再集成 ddddocr/onnxruntime，它按预期不存在；
+5. ELF e_machine —— 产物是不是目标架构的机器码（QEMU 下架构探测被 uname 骗过时会错）；
+6. 真实 HTTPS 请求 —— TLS 栈能对外握手，这是唯一的外部依赖；
+7. ja3 线额外：IMPERSONATE 选项在位 + 本地抓 ClientHello 自算 ja3n（不依赖第三方站点）。
+
+ja3 指纹为什么本地算：请求 tls.browserleaks.com 读回 ja3n 等于把发布闸门交给第三方可用性。
+改为本地起一个 TCP 监听，直接从 socket 读 ClientHello 原始字节，用纯标准库解析出
+cipher/extension/curve 列表后自算 ja3/ja3n。期望值 bd4930bd9b000ee684830e44bab76fdf 已双向
+验证：既等于 browserleaks 对 chrome152 的返回值，也等于本实现的离线计算结果。
 """
 
 import glob
 import hashlib
+import os
 import platform
 import socket
 import struct
 import sys
-import time
 import threading
+import time
 
 # RFC 8701 GREASE 保留值，JA3 计算前必须剔除，否则同一浏览器每次握手指纹都不同
 GREASE = frozenset({
@@ -38,7 +42,7 @@ GREASE = frozenset({
     0x8A8A, 0x9A9A, 0xAAAA, 0xBABA, 0xCACA, 0xDADA, 0xEAEA, 0xFAFA,
 })
 
-ROLES = ("main", "ja3", "lite")
+ROLES = ("main", "ja3")
 
 # ELF e_machine 编码（/usr/include/elf.h）
 ELF_MACHINE = {
@@ -61,10 +65,9 @@ def elf_machine(path):
 def check_arch(platform_name, patterns):
     """断言镜像里的原生产物确实是目标平台的机器码。
 
-    这是「所有未显式声明的架构探测」的通用兜底。本次重构踩过两个同源坑：
-    OpenSSL 的 ./config 与 OpenCV 的 cmake 都靠 uname 探测，而在原生 arm64 runner 上
-    armv7 容器走内核 compat 模式、uname 报成宿主 aarch64。逐个去修每个 configure
-    不可持续，改成在产物层面验一次：机器码架构不对就立刻失败。
+    这是「所有未显式声明的架构探测」的通用兜底：在原生 arm64 runner 上跑 armv7 容器时，
+    内核 compat 模式让 uname 仍报 aarch64，configure/cmake 的探测会被骗。逐个去修每个
+    configure 不可持续，改成在产物层面验一次。
     """
     expected = ELF_MACHINE.get(platform_name)
     if expected is None:
@@ -83,108 +86,89 @@ def check_arch(platform_name, patterns):
     assert checked, "没有找到可校验的原生产物（检查 glob 模式是否写错）"
     print("ELF 架构校验通过：%d 个产物 = %s（e_machine=%d）"
           % (checked, platform_name, expected))
-# chrome152 profile 的 ja3n（扩展排序归一化后的 md5），来源见模块 docstring
-CHROME152_JA3N = "bd4930bd9b000ee684830e44bab76fdf"
-CHROME152_UA_PREFIX = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/152."
-)
 
 
 # --------------------------------------------------------------------------- #
 # 通用
 # --------------------------------------------------------------------------- #
+def check_no_wheelhouse():
+    """runtime 镜像里不该出现 wheelhouse：它只在构建期 bind mount。"""
+    leftovers = [p for p in ("/wheels", "/w") if os.path.exists(p)]
+    assert not leftovers, "runtime 镜像里残留 wheel 目录: %s" % ", ".join(leftovers)
+    print("未发现 /wheels 或 /w")
+
+
+def check_no_build_tools():
+    """git 只该在构建期存在，它对运行时没有任何用途，还会带进一整套证书与网络工具链。"""
+    import shutil
+
+    assert shutil.which("git") is None, "镜像里出现 git，它只该在构建期存在"
+    print("git: 不存在（符合预期）")
+
+
+def check_no_ocr():
+    """镜像不再集成 OCR 栈：这些模块必须按预期 import 失败。
+
+    做成断言而不是「探测到就跳过」：依赖被无意加回镜像时要立刻失败。
+    """
+    for mod in ("ddddocr", "onnxruntime", "cv2"):
+        try:
+            __import__(mod)
+        except ImportError:
+            print("%-12s 不存在（符合预期，OCR 由上层从各自 wheelhouse 装）" % mod)
+        else:
+            raise AssertionError("%s 竟然可以 import —— 本镜像不含 OCR 栈" % mod)
+
+
 def check_pycurl():
     import pycurl
 
     info = pycurl.version_info()
-    print("pycurl %s | libcurl %s" % (pycurl.version.split()[0], info[1]))
+    print("pycurl %s | libcurl %s | 加载自 %s"
+          % (pycurl.version.split()[0], info[1], os.path.dirname(pycurl.__file__)))
     assert hasattr(pycurl, "CURL_VERSION_HTTP3"), "pycurl 缺 CURL_VERSION_HTTP3 常量"
-    # 注意不能用 "HTTP3" in pycurl.version 判断：pycurl 的版本串里只有 nghttp3/1.15.0
-    # 这种依赖名，不含 curl 的 Features 行（Features 只在 curl --version 里）
+    # 不能用 "HTTP3" in pycurl.version 判断：pycurl 的版本串里只有 nghttp3/1.18.0 这类
+    # 依赖名，Features 行只在 curl --version 里
     assert info[4] & pycurl.CURL_VERSION_HTTP3, (
-        "libcurl 未编译 HTTP3（features=0x%x）: 变体应带 ngtcp2/nghttp3 后端" % info[4]
+        "libcurl 未编译 HTTP3（features=0x%x）: 应带 ngtcp2/nghttp3 后端" % info[4]
     )
     print("HTTP3: 已启用（features=0x%x）" % info[4])
     return pycurl
 
 
-def check_no_git():
-    """git 只该在构建期存在（.build_deps 里 clone 源码用），运行时不该有。
+def check_self_contained():
+    """依赖应当在 wheel 里，而不是系统里。
 
-    它带进 /usr/bin/git + 4MB git-core，以及一整套证书与网络工具链，
-    对运行时镜像没有任何用途。这条断言防的是「有人把 git 加回运行时包列表」。
+    镜像只 apk 装了 system-packages.txt 里那几个包，没有 libcurl —— 若 pycurl.libs/ 少了
+    libcurl，`import pycurl` 早就该失败；这条断言把「确实来自 wheel」写死，防止有人用
+    `apk add libcurl` 把问题盖住。
     """
-    import shutil
+    import pycurl
 
-    assert shutil.which("git") is None, "镜像里出现 git，它只该在 .build_deps 里"
-    print("git: 不存在（符合预期）")
+    # auditwheel 把依赖放在 site-packages/pycurl.libs/，与 pycurl/ 目录平级
+    libs_dir = os.path.join(os.path.dirname(os.path.dirname(pycurl.__file__)), "pycurl.libs")
+    assert os.path.isdir(libs_dir), "%s 不存在 —— wheel 没有把依赖收进来" % libs_dir
 
-
-def check_ocr(expect):
-    """expect=True 断言 OCR 栈真的能推理；False 断言这里确实没有 OCR 栈。
-
-    386/armv6/s390x 的基座 ddddocr 是空壳镜像（无 onnxruntime/OpenCV），
-    pycurl 变体在这些平台上仍完整可用，只是没有 OCR 能力——所以这一项按平台
-    显式传入，而不是让脚本自己探测（探测会在依赖意外消失时静默降级为通过）。
-    """
-    if not expect:
-        for mod in ("ddddocr", "cv2", "onnxruntime"):
-            try:
-                __import__(mod)
-            except ImportError:
-                print("%-12s 不存在（符合该平台的空壳基座契约）" % mod)
-            else:
-                raise AssertionError(
-                    "%s 竟然可以 import —— 若该平台已提供 OCR，请同步更新 README 与平台矩阵" % mod
-                )
-        return
-
-    try:
-        import cv2
-        import ddddocr
-        import numpy as np
-        import onnxruntime
-    except ImportError as exc:
-        raise AssertionError(
-            "该平台应当有完整 OCR 栈，但缺少依赖（%s）—— 若该平台实际只支持空壳基座，"
-            "请把 smoke 期望改为 nocr，并同步更新 README 平台矩阵" % exc
-        )
-
-    print("cv2 %s | numpy %s | onnxruntime %s"
-          % (cv2.__version__, np.__version__, onnxruntime.__version__))
-
-    # 基座的 Pillow 是自编译版本：13.x 起才有 JPEG/TIFF/FPX 解码器的修复，
-    # 且不链 libimagequant（GPL-3.0）。两条都是这次换掉 apk py3-pillow 的理由，
-    # 谁把基座退回旧版，这里会立刻失败。
-    from PIL import Image, features
-
-    assert int(Image.__version__.split(".")[0]) >= 13, (
-        "Pillow 版本过低（%s），解码器 CVE 修复需要 13.x" % Image.__version__
+    libs = sorted(os.path.basename(p) for p in glob.glob(os.path.join(libs_dir, "*.so*")))
+    assert any("libcurl" in name for name in libs), (
+        "pycurl.libs/ 里没有 libcurl（现有 %s）" % libs
     )
-    assert not features.check("libimagequant"), (
-        "Pillow 链上了 libimagequant（GPL-3.0），基座不该再带它"
-    )
-    print("Pillow %s | 无 libimagequant" % Image.__version__)
+    system = sorted(glob.glob("/usr/lib/libcurl.so*") + glob.glob("/lib/libcurl.so*"))
+    assert not system, "系统里出现 libcurl（%s）—— 依赖应完全来自 wheel" % system
 
-    img = np.full((40, 120, 3), 255, dtype=np.uint8)
-    cv2.putText(img, "AB12", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 2)
-    data = cv2.imencode(".png", img)[1].tobytes()
-
-    # ddddocr 1.6.x 按功能分类型：默认 ocr=True 是分类；det=True 才是目标检测
-    text = ddddocr.DdddOcr(show_ad=False).classification(data)
-    boxes = ddddocr.DdddOcr(det=True, show_ad=False).detection(data)
-    assert isinstance(text, str) and 1 <= len(text) <= 6, "classification 异常: %r" % (text,)
-    assert isinstance(boxes, list), "detection 异常: %r" % (type(boxes),)
-    print("OCR 推理: %r / %d 框" % (text, len(boxes)))
+    for path in sorted(glob.glob(os.path.join(libs_dir, "*.so*"))):
+        size = os.path.getsize(path) / 1024 / 1024
+        if size >= 0.5:
+            print("  %-44s %6.2f MiB" % (os.path.basename(path), size))
+    print("pycurl.libs/: %d 个库，系统无 libcurl" % len(libs))
 
 
 def check_https():
     """真实 HTTPS 请求，验证「TLS 栈真的能对外握手」——这是唯一的外部依赖。
 
-    用 generate_204（返回 204、无正文）而不是首页，避免被跳转/内容差异干扰。
-    ja3 变体的额外价值：它带着 impersonate profile 走完整握手，能抓到
-    「指纹配置让握手直接失败」这类问题（本地抓包只看 ClientHello，抓不到）。
+    用 generate_204（返回 204、无正文）而不是首页，避免被跳转/内容差异干扰。ja3 线的额外
+    价值：它带着 impersonate profile 走完整握手，能抓到「指纹配置让握手直接失败」这类问题
+    （本地抓包只看 ClientHello，抓不到）。
     """
     import pycurl
     from io import BytesIO
@@ -205,6 +189,13 @@ def check_https():
 # --------------------------------------------------------------------------- #
 # ja3：本地抓 ClientHello，自算指纹，全程离线
 # --------------------------------------------------------------------------- #
+CHROME152_JA3N = "bd4930bd9b000ee684830e44bab76fdf"
+CHROME152_UA_PREFIX = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/152."
+)
+
+
 def _recv_exact(sock, n):
     buf = b""
     while len(buf) < n:
@@ -258,8 +249,8 @@ def _serve_one_http(port_holder, request_holder):
 def _start(target, holders, timeout=20.0):
     """启动一个一次性的本地服务端线程，等它就绪后返回它监听的端口。
 
-    等待必须有上限：若服务端线程启动失败（端口占用、参数错误等），无界空转会
-    让整个冒烟 job 卡死到 CI 超时，而不是给出可读的失败原因。
+    等待必须有上限：若服务端线程启动失败，无界空转会让整个冒烟 job 卡死到 CI 超时，
+    而不是给出可读的失败原因。
     """
     thread = threading.Thread(target=target, args=tuple(holders), daemon=True)
     thread.start()
@@ -340,7 +331,7 @@ def _ja3n_of(impersonate):
     ports, records = [], []
     port, thread = _start(_serve_capture_hello, (ports, records))
     # 必须用主机名而非 IP：用 IP 时客户端不发 SNI 扩展，扩展列表与真实浏览器不同，
-    # 算出的 ja3n 自然对不上（实测少一个扩展，哈希完全不同）
+    # 算出的 ja3n 自然对不上
     handle = pycurl.Curl()
     handle.setopt(pycurl.URL, "https://localhost:%d/" % port)
     handle.setopt(pycurl.SSL_VERIFYPEER, 0)
@@ -405,35 +396,55 @@ def check_ja3():
         "UA 不是 chrome152 的浏览器 UA（可能是 pycurl 默认 UA 没被清掉）: %s" % user_agents[0]
     )
     assert len(lines) >= 10, (
-        "请求头只有 %d 个，浏览器指纹未生效（应为 15+ 个）" % len(lines)
+        "请求头只有 %d 个，浏览器指纹未生效" % len(lines)
     )
+
+
+def check_no_impersonate():
+    """main 线用未打补丁的 pycurl：IMPERSONATE 不该存在。
+
+    两条线共用同一套 Dockerfile 结构，只有 ja3 线打 patches/。这条断言防的是「补丁被
+    误应用到 main 线」，那样 lite 镜像会悄悄带上指纹能力，与基线不符。
+    """
+    import pycurl
+
+    assert not hasattr(pycurl, "IMPERSONATE"), (
+        "main 线的 pycurl 竟带 IMPERSONATE —— patches/ 被误用到了这条线"
+    )
+    print("pycurl.IMPERSONATE: 不存在（main 线未打补丁）")
 
 
 # --------------------------------------------------------------------------- #
 def main(argv):
     role = argv[1] if len(argv) > 1 else ""
-    ocr = (argv[2] if len(argv) > 2 else "ocr")
-    platform_name = argv[3] if len(argv) > 3 else ""
+    platform_name = argv[2] if len(argv) > 2 else ""
     if role not in ROLES:
-        raise SystemExit("用法: python3 - <%s> [ocr|nocr] [platform] < tests/smoke.py" % "|".join(ROLES))
-    if ocr not in ("ocr", "nocr"):
-        raise SystemExit("第二个参数只能是 ocr 或 nocr，收到: %r" % ocr)
+        raise SystemExit("用法: python3 - <%s> <platform> < tests/smoke.py" % "|".join(ROLES))
 
     print("== 环境 ==")
     print("python %s | %s" % (platform.python_version(), platform.machine()))
 
+    print("== 无 wheelhouse 残留 ==")
+    check_no_wheelhouse()
+
+    print("== 运行时不带构建工具 ==")
+    check_no_build_tools()
+
     print("== pycurl 基础能力 ==")
     check_pycurl()
 
-    print("== 运行时不带构建工具 ==")
-    check_no_git()
+    print("== 依赖自包含 ==")
+    check_self_contained()
+
+    print("== OCR 栈（期望：不存在）==")
+    check_no_ocr()
 
     print("== 产物架构 ==")
-    # libcurl / libssl 覆盖自编译的加密与传输栈；pycurl 扩展覆盖 C 扩展编译链路
+    # pycurl 扩展与它 bundle 的全部依赖都要是目标架构的机器码
+    site = "/usr/lib/python3.*/site-packages"
     check_arch(platform_name, [
-        "/usr/lib/python3.*/site-packages/pycurl*.so",
-        "/usr/lib/libcurl*.so.*",
-        "/usr/lib/libssl.so.3",
+        site + "/pycurl*.so",
+        site + "/pycurl.libs/*.so*",
     ])
 
     print("== 真实 HTTPS 请求 ==")
@@ -442,11 +453,11 @@ def main(argv):
     if role == "ja3":
         print("== TLS 指纹（本地抓包，无外部依赖）==")
         check_ja3()
+    else:
+        print("== IMPERSONATE 缺席（main 线契约）==")
+        check_no_impersonate()
 
-    print("== OCR 栈（期望：%s）==" % ocr)
-    check_ocr(ocr == "ocr")
-
-    print("smoke(%s/%s): PASS" % (role, ocr))
+    print("smoke(%s/%s): PASS" % (role, platform_name))
 
 
 if __name__ == "__main__":
