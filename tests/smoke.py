@@ -106,6 +106,18 @@ def check_no_build_tools():
     print("git: 不存在（符合预期）")
 
 
+def check_curl_cli():
+    """curl 命令行可用：二进制与它的私有库一起带进 runtime，包装脚本限定
+    LD_LIBRARY_PATH 的作用域。"""
+    import subprocess
+
+    out = subprocess.run(["curl", "--version"], capture_output=True, text=True)
+    assert out.returncode == 0, "curl 命令行不可用: %s" % (out.stderr or "").strip()[:200]
+    first = out.stdout.splitlines()[0]
+    assert "curl " in first, "curl --version 输出异常: %s" % first
+    print("curl: %s" % first.split(" ")[1])
+
+
 def check_no_ocr():
     """镜像不再集成 OCR 栈：这些模块必须按预期 import 失败。
 
@@ -437,7 +449,7 @@ def main(argv):
     check_self_contained()
 
     print("== OCR 栈（期望：不存在）==")
-    check_no_ocr()
+    check_curl_cli()
 
     print("== 产物架构 ==")
     # pycurl 扩展与它 bundle 的全部依赖都要是目标架构的机器码

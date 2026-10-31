@@ -103,6 +103,19 @@ RUN set -eux; \
 
 COPY system-packages.txt /wheels/system-packages.txt
 
+# 把 curl 命令行收进 /opt/curl-cli：二进制 + 它实际链接的库。
+# 用 ldd 结果收集而不是手写库名：库的集合随编译配置变（HTTP/3 后端、TLS 实现），
+# 手写清单迟早会漏一个，报错还表现在运行期。
+RUN set -eux; \
+    mkdir -p /opt/curl-cli; \
+    cp /usr/bin/curl /opt/curl-cli/; \
+    ldd /usr/bin/curl 2>/dev/null \
+        | sed -n 's/.*=> \(\/[^ ]*\).*/\1/p; s/^\s*\(\/[^ ]*\) (0x[0-9a-f]*).*/\1/p' \
+        | sort -u \
+        | while read -r lib; do cp -L "$lib" /opt/curl-cli/ 2>/dev/null || true; done; \
+    ls -1 /opt/curl-cli
+
+
 RUN set -eux; \
     python3 /usr/local/bin/pack_wheel.py --emit-index --out-dir /wheels; \
     cd /wheels; \
@@ -145,5 +158,15 @@ RUN --mount=type=bind,from=build,source=/wheels,target=/w \
     uv pip install --system --break-system-packages --no-cache \
         --no-index --find-links /w "pycurl==${PYCURL_VERSION}"; \
     python3 -c "import pycurl; print(pycurl.version)"
+
+
+# curl 命令行：二进制与它的私有库放在一起，用包装脚本限定 LD_LIBRARY_PATH 的作用域，
+# 免得污染镜像里其他进程的库解析。
+COPY --from=build /opt/curl-cli /opt/curl-cli
+RUN set -eux; \
+    printf '#!/bin/sh\nexec env LD_LIBRARY_PATH=/opt/curl-cli /opt/curl-cli/curl "$@"\n' \
+        > /usr/local/bin/curl; \
+    chmod +x /usr/local/bin/curl; \
+    curl --version | head -1
 
 CMD ["python3", "-c", "import pycurl; print(pycurl.version)"]

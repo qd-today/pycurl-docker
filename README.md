@@ -17,7 +17,8 @@ pycurl 的 musllinux wheel 分发，另附装好的可运行镜像。两条构�
 | `wheelhouse`、`<ver>-wheelhouse` | `scratch` + `/wheels`：不含指纹伪装那条线的 wheel 载体 |
 | `ja3-wheelhouse`、`ja3-<ver>-wheelhouse` | 同上，含指纹伪装 |
 
-`lite` 曾是「不含 OCR」的独立镜像；OCR 移出后两者内容一致，因此合并为一个 manifest、两个标签别名。
+`lite` 只是 `latest` 的别名：两个标签由一次 `imagetools create` 挂到同一个 manifest，digest 相同。
+镜像不含 OCR，需要时从 ddddocr / onnxruntime 的 wheelhouse 装。
 `<ver>` 只在 tag 推送时产出；workflow_dispatch 只更新滚动标签。
 
 ## 快速开始
@@ -40,27 +41,27 @@ print(c.getinfo(pycurl.RESPONSE_CODE), len(body))
 以本镜像为基础：
 
 ```dockerfile
-FROM a76yyyy/pycurl:latest
-```
-
-从 wheelhouse 装（可挂任意目录，`/w/simple` 是 PEP 503 索引）：
-
-```dockerfile
 # syntax=docker/dockerfile:1
 FROM alpine:3.24
-RUN --mount=type=bind,from=a76yyyy/pycurl:1.5.2-wheelhouse,source=/wheels,target=/w \
+RUN --mount=type=bind,from=a76yyyy/pycurl:wheelhouse,source=/wheels,target=/w \
     apk add --no-cache $(cat /w/system-packages.txt) uv && \
+    uv pip install --system --break-system-packages --no-cache --no-deps \
+        --no-index --find-links /w "pycurl==7.48.0" && \
     uv pip install --system --break-system-packages --no-cache \
-        --index-url https://pypi.org/simple \
-        --extra-index-url file:///w/simple \
-        "pycurl==7.48.0"
+        --index-url https://pypi.org/simple （pycurl 无传递依赖） && \
+    uv pip check --system
 ```
 
-多个 wheelhouse 叠加：
+| 写法 | 原因 |
+|---|---|
+| `--no-index --find-links /w` | wheelhouse 提供的包**只**从本地取。`--no-index` 让 PyPI 完全不参与，缺件就是构建失败，而不是静默回落到 PyPI 的同名包（PyPI 的 onnxruntime 没有 cp314 的 musllinux 轮子，真回落会在源码编译那步失败，报错还指向别处） |
+| `--no-deps` | 只装 wheel 本体，传递依赖显式列在下一步，不让解析器自己去找 |
+| 第二步走 PyPI | 纯 Python 依赖各架构都有轮子，从 PyPI 取即可 |
+| `uv pip check` | 上游新增依赖而这一步的清单没跟上时，构建直接失败 |
 
-```dockerfile
-ENV UV_EXTRA_INDEX_URL="file:///w/a/simple file:///w/b/simple"
-```
+多个 wheelhouse 时每个 `--find-links` 给一份即可：每个包只属于一个 wheelhouse、版本也钉死，
+不存在歧义。若同一个包出现在多个 wheelhouse 且版本不同，flat 索引没有优先级，那时改用
+PEP 503 索引（`--extra-index-url file:///w/simple`，按定义顺序查询，第一个含该包的胜出）。
 
 `RUN --mount` 需要 BuildKit（首行 `# syntax=docker/dockerfile:1`）；Kaniko 等不支持时用
 `COPY --from=<wheelhouse> /wheels /wheels`，代价是 `/wheels` 会进镜像层，且 `rm` 删不掉。
@@ -209,9 +210,9 @@ c.perform()
 
 ## 已知限制
 
-- 镜像不含 `curl` 命令行，只有 pycurl。需要 CLI 时 `apk add curl`（那是 Alpine 的 libcurl，与 wheel
-  里那份不是同一个）。
-- wheel 的 `cp314` 与 `alpine:3.24` 的 Python 3.14 绑定；换 Python 小版本需要重新构建。
+- 镜像带 `curl` 命令行（build 阶段编好的那份，与 pycurl 扩展同源），二进制与它的私有库
+  放在 `/opt/curl-cli`，由 `/usr/local/bin/curl` 包装脚本限定 `LD_LIBRARY_PATH` 的作用域。
+  ja3 线的 CLI 是普通 curl（不含指纹伪装），与旧镜像一致——指纹伪装只在 pycurl 扩展里。- wheel 的 `cp314` 与 `alpine:3.24` 的 Python 3.14 绑定；换 Python 小版本需要重新构建。
 - BoringSSL 未提供 `SSL_CTX_set_ciphersuites()`，ja3 线的 `pycurl.TLS13_CIPHERS` 恒返回
   `CURLE_NOT_BUILT_IN`——TLS 1.3 套件由 impersonate target 内部配置。若不能用打过补丁的 pycurl，
   可 `curl_easy_setopt(handle, 10999, b"chrome152")`（10999 即 `CURLOPT_IMPERSONATE`）。
