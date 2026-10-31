@@ -41,27 +41,24 @@ print(c.getinfo(pycurl.RESPONSE_CODE), len(body))
 以本镜像为基础：
 
 ```dockerfile
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1.7
 FROM alpine:3.24
-RUN --mount=type=bind,from=a76yyyy/pycurl:wheelhouse,source=/wheels,target=/w \
-    apk add --no-cache $(cat /w/system-packages.txt) uv && \
-    uv pip install --system --break-system-packages --no-cache --no-deps \
-        --no-index --find-links /w "pycurl==7.48.0" && \
+RUN --mount=type=bind,from=a76yyyy/pycurl:wheelhouse,source=/wheels,target=/w1 \
+    apk add --no-cache $(cat /w1/system-packages.txt) uv && \
     uv pip install --system --break-system-packages --no-cache \
-        --index-url https://pypi.org/simple （pycurl 无传递依赖） && \
-    uv pip check --system
+        --index-url https://pypi.org/simple \
+        --extra-index-url file:///w1/simple \
+        "pycurl==7.48.0"
 ```
 
 | 写法 | 原因 |
 |---|---|
-| `--no-index --find-links /w` | wheelhouse 提供的包**只**从本地取。`--no-index` 让 PyPI 完全不参与，缺件就是构建失败，而不是静默回落到 PyPI 的同名包（PyPI 的 onnxruntime 没有 cp314 的 musllinux 轮子，真回落会在源码编译那步失败，报错还指向别处） |
-| `--no-deps` | 只装 wheel 本体，传递依赖显式列在下一步，不让解析器自己去找 |
-| 第二步走 PyPI | 纯 Python 依赖各架构都有轮子，从 PyPI 取即可 |
-| `uv pip check` | 上游新增依赖而这一步的清单没跟上时，构建直接失败 |
+| `apk add $(cat /w1/system-packages.txt)` | 清单是 wheelhouse 的运行时前置条件（解释器与 `libz`），写错会在这里构建失败 |
+| `--index-url https://pypi.org/simple` | 默认索引是**最低**优先级，纯 Python 依赖从这里兜底 |
+| `--extra-index-url file:///w1/simple` | 每个 wheelhouse 一个，按定义顺序查询；first-index 策略下第一个含该包的索引胜出。实测（往本地 wheel 里塞标记文件后安装）：本地那份一定被选中 |
+| 发行名与 PyPI 同名 | wheelhouse 里的 wheel 用 PyPI 同名发行名，用户换回 PyPI 版不用改任何配置 |
 
-多个 wheelhouse 时每个 `--find-links` 给一份即可：每个包只属于一个 wheelhouse、版本也钉死，
-不存在歧义。若同一个包出现在多个 wheelhouse 且版本不同，flat 索引没有优先级，那时改用
-PEP 503 索引（`--extra-index-url file:///w/simple`，按定义顺序查询，第一个含该包的胜出）。
+`/w1/simple` 是 PEP 503 索引，链接为相对路径，可与 wheel 目录一起挂到任意位置。
 
 `RUN --mount` 需要 BuildKit（首行 `# syntax=docker/dockerfile:1`）；Kaniko 等不支持时用
 `COPY --from=<wheelhouse> /wheels /wheels`，代价是 `/wheels` 会进镜像层，且 `rm` 删不掉。
@@ -212,7 +209,8 @@ c.perform()
 
 - 镜像带 `curl` 命令行（build 阶段编好的那份，与 pycurl 扩展同源），二进制与它的私有库
   放在 `/opt/curl-cli`，由 `/usr/local/bin/curl` 包装脚本限定 `LD_LIBRARY_PATH` 的作用域。
-  ja3 线的 CLI 是普通 curl（不含指纹伪装），与旧镜像一致——指纹伪装只在 pycurl 扩展里。- wheel 的 `cp314` 与 `alpine:3.24` 的 Python 3.14 绑定；换 Python 小版本需要重新构建。
+  ja3 线的 CLI 是 `curl-impersonate`（`curl 8.23.0-IMPERSONATE`，BoringSSL），与 pycurl
+  扩展同一套补丁；main 线的 CLI 是普通 curl（OpenSSL）。- wheel 的 `cp314` 与 `alpine:3.24` 的 Python 3.14 绑定；换 Python 小版本需要重新构建。
 - BoringSSL 未提供 `SSL_CTX_set_ciphersuites()`，ja3 线的 `pycurl.TLS13_CIPHERS` 恒返回
   `CURLE_NOT_BUILT_IN`——TLS 1.3 套件由 impersonate target 内部配置。若不能用打过补丁的 pycurl，
   可 `curl_easy_setopt(handle, 10999, b"chrome152")`（10999 即 `CURLOPT_IMPERSONATE`）。

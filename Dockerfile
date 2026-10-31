@@ -131,7 +131,7 @@ COPY system-packages.txt /wheels/system-packages.txt
 # 手写清单迟早会漏一个，报错还表现在运行期。
 RUN set -eux; \
     mkdir -p /opt/curl-cli; \
-    cp /usr/bin/curl /opt/curl-cli/; \
+    cp /usr/bin/curl /opt/curl-cli/curl; \
     ldd /usr/bin/curl 2>/dev/null \
         | sed -n 's/.*=> \(\/[^ ]*\).*/\1/p; s/^\s*\(\/[^ ]*\) (0x[0-9a-f]*).*/\1/p' \
         | sort -u \
@@ -166,6 +166,7 @@ FROM ${BASE_IMAGE} AS runtime
 
 ARG PYCURL_VERSION=7.48.0
 ARG APK_MIRROR=""
+ARG PIP_MIRROR=""
 
 LABEL maintainer="a76yyyy <q981331502@163.com>"
 LABEL org.opencontainers.image.source=https://github.com/qd-today/pycurl-docker
@@ -184,7 +185,10 @@ RUN --mount=type=bind,from=build,source=/wheels,target=/w \
 RUN --mount=type=bind,from=build,source=/wheels,target=/w \
     set -eux; \
     uv pip install --system --break-system-packages --no-cache \
-        --no-index --find-links /w "pycurl==${PYCURL_VERSION}"; \
+        --index-url "${PIP_MIRROR:-https://pypi.org/simple}" \
+        --extra-index-url file:///w/simple \
+        "pycurl==${PYCURL_VERSION}"; \
+    uv pip check --system; \
     python3 -c "import pycurl; print(pycurl.version)"
 
 
