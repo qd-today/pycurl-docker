@@ -75,6 +75,7 @@ ENV UV_EXTRA_INDEX_URL="file:///w/a/simple file:///w/b/simple"
 | TLS 库 | OpenSSL 3.5.9（Alpine 包，随 wheel 一起打进去） | BoringSSL（随 curl-impersonate 静态链接） |
 | HTTP/3 后端 | ngtcp2 1.25.0 + nghttp3 1.18.0（自编） | ngtcp2 + BoringSSL |
 | pycurl | 7.48.0 | 7.48.0 + `patches/pycurl-impersonate.patch`（`pycurl.IMPERSONATE`） |
+| 系统包 | `python3`、`ca-certificates`、`tzdata`（见「产物」） | 同左 |
 | 包管理器 | `uv` | `uv` |
 | C 依赖位置 | `site-packages/pycurl.libs/` | 同左 |
 | OCR | 无 | 无 |
@@ -116,8 +117,8 @@ loong64 构建需 `--build-arg BASE_IMAGE=ghcr.io/loong64/alpine:3.24`（官方 
 |---|---|---|---|
 | `wheelhouse`（`/wheels`，6.7 MB wheel） | 6.4 MiB | 13 MB | 6.7 MB |
 | `ja3-wheelhouse`（`/wheels`，23.9 MB wheel） | 22.7 MiB | 48 MB | 23.9 MB |
-| `latest` | 36.6 MiB | 141 MB | 98 MB（site-packages 17 MB） |
-| `ja3-latest` | 53.2 MiB | 201 MB | 138 MB（site-packages 58 MB） |
+| `latest` | 36.7 MiB | 143 MB | 99 MB（site-packages 17 MB） |
+| `ja3-latest` | 53.4 MiB | 203 MB | 140 MB（site-packages 58 MB） |
 
 `占用磁盘` 取 `docker images` 口径：containerd 计入解压层与压缩 blob 两份。
 
@@ -137,10 +138,16 @@ ja3 线更大的原因：BoringSSL 以静态库形式同时进入 `libcurl-imper
 ```
 
 `system-packages.txt` 是需要 `apk add` 的运行时包，一行一个（本仓库为 `python3`、
-`ca-certificates`）。判定依据是 wheel 里 ELF 的 `DT_NEEDED` 闭包：除 musl 的 `libc` 与
-`libz.so.1` 外全部被 `auditwheel` 收进 `pycurl.libs/`，而 `libz.so.1` 由 `python3` 包的
-依赖 `zlib` 带入；`ca-certificates` 不是库，是 TLS 的信任链（基础镜像自带
-`ca-certificates-bundle`，这里显式列出以免换到更瘦的基座后静默失去证书校验）。
+`ca-certificates`、`tzdata`）：
+
+| 包 | 为什么在清单里 |
+|---|---|
+| `python3` | 解释器本身；它的依赖 `zlib` 提供 `libz.so.1`，这是 wheel 里唯一没有被 `auditwheel` 收走的动态库 |
+| `ca-certificates` | TLS 信任链（`/etc/ssl/certs/ca-certificates.crt`）。基础镜像自带 `ca-certificates-bundle`，显式列出以免换到更瘦的基座后静默失去证书校验 |
+| `tzdata` | Python 的 `zoneinfo` 需要系统时区库；pycurl 本身不用，但本镜像作为上层基座，缺了会让 `ZoneInfo("Asia/Shanghai")` 直接失败 |
+
+判定依据是 wheel 里 ELF 的 `DT_NEEDED` 闭包：除 musl 的 `libc` 与 `libz.so.1` 外全部被
+`auditwheel` 收进 `pycurl.libs/`（可以用 `unzip -l pycurl-*.whl | grep libs/` 核对）。
 
 `simple/` 由 `src/pack_wheel.py --emit-index` 生成，链接是相对路径，可与其他 wheel 目录一起
 挂到任意位置。
