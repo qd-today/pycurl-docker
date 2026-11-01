@@ -72,6 +72,18 @@ on:
         description: '缓存 scope 后缀。留空=复用缓存；填任意值=不复用旧层'
         type: string
         default: ''
+      curl_version:
+        description: 'curl 源码版本（自编 libcurl）'
+        type: string
+        default: ''
+      ngtcp2_version:
+        description: 'ngtcp2 源码版本'
+        type: string
+        default: ''
+      nghttp3_version:
+        description: 'nghttp3 源码版本'
+        type: string
+        default: ''
       pycurl_version:
         description: '覆盖 Dockerfile 中的 PYCURL_VERSION（留空 = 用默认值）'
         type: string
@@ -236,6 +248,9 @@ jobs:
         env:
           V: ${{ inputs.pycurl_version }}
           A: ${{ inputs.alpine_version }}
+          CV: ${{ inputs.curl_version }}
+          N2: ${{ inputs.ngtcp2_version }}
+          N3: ${{ inputs.nghttp3_version }}
           BASE_IMAGE: ${{ matrix.base_image }}
         run: |
           set -euo pipefail
@@ -243,10 +258,13 @@ jobs:
             echo "args<<__BUILD_ARGS__"
             [ -z "$V" ] || echo "PYCURL_VERSION=$V"
             [ -z "$A" ] || echo "ALPINE_VERSION=$A"
+            [ -z "$CV" ] || echo "CURL_VERSION=$CV"
+            [ -z "$N2" ] || echo "NGTCP2_VERSION=$N2"
+            [ -z "$N3" ] || echo "NGHTTP3_VERSION=$N3"
             [ -z "$BASE_IMAGE" ] || echo "BASE_IMAGE=$BASE_IMAGE"
             echo "__BUILD_ARGS__"
           } >> "$GITHUB_OUTPUT"
-          echo "构建参数：PYCURL_VERSION=${V:-<默认>} ALPINE_VERSION=${A:-<默认>} BASE_IMAGE=${BASE_IMAGE:-<默认>}"
+          echo "构建参数：PYCURL_VERSION=${V:-<默认>} CURL_VERSION=${CV:-<默认>} NGTCP2_VERSION=${N2:-<默认>} NGHTTP3_VERSION=${N3:-<默认>} ALPINE_VERSION=${A:-<默认>} BASE_IMAGE=${BASE_IMAGE:-<默认>}"
       - name: Build wheelhouse image
         id: wheelhouse
         uses: docker/build-push-action@v6
@@ -359,6 +377,9 @@ jobs:
         env:
           V: ${{ inputs.pycurl_version }}
           A: ${{ inputs.alpine_version }}
+          CV: ${{ inputs.curl_version }}
+          N2: ${{ inputs.ngtcp2_version }}
+          N3: ${{ inputs.nghttp3_version }}
           BASE_IMAGE: ${{ matrix.base_image }}
         run: |
           set -euo pipefail
@@ -366,6 +387,9 @@ jobs:
             echo "args<<__BUILD_ARGS__"
             [ -z "$V" ] || echo "PYCURL_VERSION=$V"
             [ -z "$A" ] || echo "ALPINE_VERSION=$A"
+            [ -z "$CV" ] || echo "CURL_VERSION=$CV"
+            [ -z "$N2" ] || echo "NGTCP2_VERSION=$N2"
+            [ -z "$N3" ] || echo "NGHTTP3_VERSION=$N3"
             [ -z "$BASE_IMAGE" ] || echo "BASE_IMAGE=$BASE_IMAGE"
             echo "__BUILD_ARGS__"
           } >> "$GITHUB_OUTPUT"

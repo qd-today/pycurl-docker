@@ -42,6 +42,18 @@ on:
         description: '指定 pycurl 版本（留空 = Dockerfile 默认值 7.48.0）'
         type: string
         default: ''
+      curl_version:
+        description: '指定 curl 版本（留空 = Dockerfile 默认值 8.23.0）'
+        type: string
+        default: ''
+      ngtcp2_version:
+        description: '指定 ngtcp2 版本（留空 = Dockerfile 默认值 1.25.0）'
+        type: string
+        default: ''
+      nghttp3_version:
+        description: '指定 nghttp3 版本（留空 = Dockerfile 默认值 1.18.0）'
+        type: string
+        default: ''
       force:
         description: '强制重新构建，跳过「仅文档改动 / 同一 commit 已有成功运行」的判定'
         type: boolean
@@ -66,4 +78,7 @@ jobs:
       native_riscv: ${{ github.event.inputs.native_riscv == 'true' }}
       cache_bust: ${{ github.event.inputs.cache_bust || '' }}
       pycurl_version: ${{ github.event.inputs.pycurl_version || '' }}
+      curl_version: ${{ github.event.inputs.curl_version || '' }}
+      ngtcp2_version: ${{ github.event.inputs.ngtcp2_version || '' }}
+      nghttp3_version: ${{ github.event.inputs.nghttp3_version || '' }}
       force: ${{ github.event.inputs.force == 'true' }}

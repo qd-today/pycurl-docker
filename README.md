@@ -224,6 +224,24 @@ c.perform()
 ## 维护者
 
 <details>
+<summary>版本参数</summary>
+
+上游发新版时，改这里或 dispatch 时传同名输入即可构建新版本；产物版本与传入版本不一致时
+构建失败（`--expect-version` 断言），不会出现「tag 写着新版、内容是旧版」。
+
+| 参数 | 作用 | 默认值 |
+|---|---|---|
+| `pycurl_version` | pycurl 版本（从 PyPI sdist 自编） | 7.48.0 |
+| `curl_version` | curl 源码版本（自编 libcurl） | 8.23.0 |
+| `ngtcp2_version` | ngtcp2 源码版本（HTTP/2 over QUIC） | 1.25.0 |
+| `nghttp3_version` | nghttp3 源码版本（HTTP/3） | 1.18.0 |
+| `alpine_version` | alpine 版本，决定 Python 小版本与 wheel 的 cpXX tag | 3.24 |
+
+`curl-impersonate` 固定到 commit（上游已删 v2.4.0 标签，按 tag 拉不到），不随版本参数变化。
+
+</details>
+
+<details>
 <summary>CI 结构</summary>
 
 两条线各一个调用方（`Build Image.yml` / `Build Ja3 Image.yml`），共用 `.github/workflows/_image.yml`，

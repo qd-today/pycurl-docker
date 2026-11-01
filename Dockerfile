@@ -145,6 +145,8 @@ RUN set -eux; \
     sha256sum ./*.whl > SHA256SUMS; \
     ls -l; \
     cat SHA256SUMS; \
+    # 自检装的就是刚编出的那一个 wheel：这里用 --no-index 是有意的——不给索引参与
+    # 的机会，确保验证的就是这个产物本身。与 runtime 的消费方式（extra-index）无关。
     python3 -m pip install --no-cache-dir --break-system-packages \
         --no-index --find-links /wheels "pycurl==${PYCURL_VERSION}"; \
     python3 -c "import pycurl; assert pycurl.version_info()[4] & pycurl.CURL_VERSION_HTTP3"
