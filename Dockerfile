@@ -186,24 +186,29 @@ RUN --mount=type=bind,from=build,source=/wheels,target=/w \
 
 # --extra-index-url 指向 wheelhouse 的 PEP 503 索引，--index-url 保底走 PyPI：
 # 本地有同名包一定优先（实测过）。--no-cache：否则解压副本会留在镜像层里。
-# QEMU 下 uv 装 wheel 会挂死（日志停在 "marker environment resolution took" 之后，几十小时
-# 零输出）。上游有两个相关报告：issue #16024 是 uv 在 QEMU 下 segfault（被判定为 QEMU 的
-# bug）；PR #544 是 QEMU 这类慢环境触发 bytecode 编译超时，因此引入了
-# UV_COMPILE_BYTECODE_TIMEOUT。这里两个都关掉：pycurl 是 C 扩展，几乎没有需要预编译的
-# .py，跳过字节码编译没有代价。
-#
-# 排查期的日志：RUST_LOG=uv=trace + 连续三个 -v。输出很大，定位完应降回默认
-# （去掉 RUST_LOG 与多余的 -v），否则每次构建的日志都会膨胀。
+# armv6 上不用 uv，改用 pip。已排除的因素：不是并发（UV_CONCURRENT_INSTALLS=1 无效）、
+# 不是 bytecode 编译（--no-compile-bytecode 无效）。RUST_LOG=uv=trace 显示日志停在依赖
+# 解析完成（0.123s）、安装动作刚开始的位置，之后零输出——挂死在文件操作层面。
+# arm64 与 armv7 都正常，只有 QEMU 模拟的 armv6 会中招；上游 issue #16024 同类问题
+# 被维护者判定为 QEMU 的 bug，不会在 uv 侧修。pip 是纯 Python 单线程，能过。
 # 注释必须写在 RUN 之前：Docker 把续行拼成一行，行内 # 会把后面的命令整段注释掉。
 RUN --mount=type=bind,from=build,source=/wheels,target=/w \
     set -eux; \
-    RUST_LOG=uv=trace uv pip install --system --break-system-packages --no-cache \
-        -vvv \
-        --no-compile-bytecode \
-        --index-url "${PIP_MIRROR:-https://pypi.org/simple}" \
-        --extra-index-url file:///w/simple \
-        "pycurl==${PYCURL_VERSION}"; \
-    uv pip check --system; \
+    if [ "$(uname -m)" = "armv6l" ]; then \
+        apk add --no-cache py3-pip; \
+        python3 -m pip install --no-cache-dir --break-system-packages \
+            --index-url "${PIP_MIRROR:-https://pypi.org/simple}" \
+            --extra-index-url file:///w/simple \
+            "pycurl==${PYCURL_VERSION}"; \
+        python3 -m pip check; \
+        apk del py3-pip; \
+    else \
+        uv pip install --system --break-system-packages --no-cache --no-compile-bytecode \
+            --index-url "${PIP_MIRROR:-https://pypi.org/simple}" \
+            --extra-index-url file:///w/simple \
+            "pycurl==${PYCURL_VERSION}"; \
+        uv pip check --system; \
+    fi; \
     python3 -c "import pycurl; print(pycurl.version)"
 
 
