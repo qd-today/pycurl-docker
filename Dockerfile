@@ -186,7 +186,10 @@ RUN --mount=type=bind,from=build,source=/wheels,target=/w \
 # --no-cache：否则解压副本会写进 /root/.cache/uv，原样留在镜像层里
 RUN --mount=type=bind,from=build,source=/wheels,target=/w \
     set -eux; \
-    uv pip install --system --break-system-packages --no-cache \
+    # armv6 走 QEMU 时 nproc 报的是宿主核数，uv 照着开并发，在 QEMU 的 futex 上会挂死
+    # （表现为 uv pip install 长时间零输出）。并发压到 1 顺序执行。
+    export UV_CONCURRENT_DOWNLOADS=1 UV_CONCURRENT_INSTALLS=1; \
+    uv pip install --system --break-system-packages --no-cache --verbose \
         --index-url "${PIP_MIRROR:-https://pypi.org/simple}" \
         --extra-index-url file:///w/simple \
         "pycurl==${PYCURL_VERSION}"; \
