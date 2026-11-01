@@ -168,6 +168,10 @@ COPY --from=build /wheels/ /wheels/
 ########################################################################
 FROM ${BASE_IMAGE} AS runtime
 
+# Docker 自动提供的目标平台参数。不能用 uname -m 判断：buildkit 的 RUN 里 uname 返回的
+# 是构建环境的内核架构（armv6 构建实测返回 aarch64），不是 --platform 指定的那个。
+ARG TARGETARCH
+ARG TARGETVARIANT
 ARG PYCURL_VERSION=7.49.0
 ARG APK_MIRROR=""
 ARG PIP_MIRROR=""
@@ -191,10 +195,12 @@ RUN --mount=type=bind,from=build,source=/wheels,target=/w \
 # 解析完成（0.123s）、安装动作刚开始的位置，之后零输出——挂死在文件操作层面。
 # arm64 与 armv7 都正常，只有 QEMU 模拟的 armv6 会中招；上游 issue #16024 同类问题
 # 被维护者判定为 QEMU 的 bug，不会在 uv 侧修。pip 是纯 Python 单线程，能过。
+# 架构判断必须用 TARGETARCH/TARGETVARIANT：uname -m 在 buildkit 的 RUN 里拿到的是构建
+# 环境的内核架构（armv6 构建实测返回 aarch64），曾因此让这个分支完全没生效。
 # 注释必须写在 RUN 之前：Docker 把续行拼成一行，行内 # 会把后面的命令整段注释掉。
 RUN --mount=type=bind,from=build,source=/wheels,target=/w \
     set -eux; \
-    if [ "$(uname -m)" = "armv6l" ]; then \
+    if [ "${TARGETARCH}" = "arm" ] && [ "${TARGETVARIANT}" = "v6" ]; then \
         apk add --no-cache py3-pip; \
         python3 -m pip install --no-cache-dir --break-system-packages \
             --index-url "${PIP_MIRROR:-https://pypi.org/simple}" \
