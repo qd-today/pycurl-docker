@@ -1,0 +1,53 @@
+name: Probe armv6
+# 临时诊断：判断 armv6 卡死是 uv 的问题、pycurl wheel 的问题，还是 armv6 QEMU 环境本身的问题。
+# 三组对照：
+#   1) uv 装纯 Python 包（six）        -> uv 在 armv6 上是否普遍可用
+#   2) uv 装带 .so 的包（pycurl）      -> 是否与扩展模块有关
+#   3) pip 装同一个包                  -> 换安装器是否绕过
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: docker/setup-qemu-action@v3
+      - name: 环境事实
+        run: |
+          docker run --rm --platform linux/arm/v6 alpine:3.24 sh -c '
+            echo "uname -m: $(uname -m)"
+            apk add -q python3 uv
+            echo "uv: $(uv --version)"
+            echo "python: $(python3 -V)"
+            echo "nproc: $(nproc)"
+          '
+      - name: 1) uv 装纯 Python 包
+        timeout-minutes: 8
+        run: |
+          docker run --rm --platform linux/arm/v6 alpine:3.24 sh -c '
+            apk add -q python3 uv
+            start=$(date +%s)
+            uv pip install --system --break-system-packages --no-cache six
+            echo "耗时: $(( $(date +%s) - start ))s"
+          '
+      - name: 2) uv 装带 .so 的包
+        timeout-minutes: 8
+        run: |
+          docker run --rm --platform linux/arm/v6 alpine:3.24 sh -c '
+            apk add -q python3 uv
+            start=$(date +%s)
+            uv pip install --system --break-system-packages --no-cache --no-compile-bytecode "pycurl==7.49.0"
+            echo "耗时: $(( $(date +%s) - start ))s"
+            python3 -c "import pycurl; print(pycurl.version)"
+          '
+      - name: 3) pip 装同一个包（对照）
+        timeout-minutes: 8
+        run: |
+          docker run --rm --platform linux/arm/v6 alpine:3.24 sh -c '
+            apk add -q python3 py3-pip
+            start=$(date +%s)
+            python3 -m pip install --no-cache-dir --break-system-packages "pycurl==7.49.0"
+            echo "耗时: $(( $(date +%s) - start ))s"
+            python3 -c "import pycurl; print(pycurl.version)"
+          '
