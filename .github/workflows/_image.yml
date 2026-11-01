@@ -219,7 +219,9 @@ jobs:
     runs-on: ${{ matrix.runner }}
     # QEMU 架构要模拟全量编译 curl（ja3 线还要再加 BoringSSL 与 nghttp3/ngtcp2），
     # 给到 GitHub 单 job 上限附近，避免慢架构被超时误杀
-    timeout-minutes: 360
+    # 6 小时太长：卡住时不会自动失败，白占 runner。正常最慢的 arm 组（三架构 + BoringSSL）
+    # 一小时内能完成，150 分钟留足余量。
+    timeout-minutes: 150
     permissions:
       contents: read
       packages: write
