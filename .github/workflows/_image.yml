@@ -103,7 +103,9 @@ on:
         required: false
 
 env:
-  PUBLISH: ${{ inputs.push || startsWith(github.ref, 'refs/tags/') }}
+  # 产物总是推：dev 构建（dispatch 不勾 push）也要产出可拉取的镜像。
+  # 「发不发布」只决定 tag 怎么命名（tag / 版本号 / dev），不再决定推不推。
+  PUBLISH: 'true'
   IMAGE: docker.io/a76yyyy/pycurl
   # 与仓库同名：ghcr 上只保留同名 package
   GHCR_IMAGE: ghcr.io/qd-today/pycurl-docker
@@ -470,7 +472,7 @@ jobs:
     timeout-minutes: 30
     # 闸门（fail-closed）：① 有发布意图 ② build 与 smoke 都成功（任何一个失败/取消都不发布，
     # 也不做「部分成功就先发一半」）③ 平台集合完整（见下一步）
-    if: ${{ (inputs.push || startsWith(github.ref, 'refs/tags/')) && !cancelled() && needs.build.result == 'success' && needs.smoke.result == 'success' && needs.plan.outputs.skip != 'true' }}
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.smoke.result == 'success' && needs.plan.outputs.skip != 'true' }}
     permissions:
       contents: read
       packages: write
@@ -562,18 +564,26 @@ jobs:
             echo "::endgroup::"
           }
 
-          # 版本 tag 只在 tag 事件产出；dispatch 时 ref_name 是分支名，推出去会污染 Hub
+          # tag 命名按模式分三种，避免 dispatch 污染版本 tag：
+          #   tag 推送           -> 版本 tag + 滚动 tag（2.0.0/lite-2.0.0、ja3-2.0.0/ja3-lite-2.0.0）
+          #   dispatch 勾了 push -> 只滚滚动 tag（latest/lite-latest、ja3-*）
+          #   dispatch 未勾 push -> dev（dev / ja3-dev），给测试用，不碰正式 tag
           VERSION_TAGS=""
           WH_VERSION_TAG=""
+          RT_TAGS="${LATEST_TAGS}"
+          WH_TAGS="${WHEELHOUSE_TAGS}"
           if [ "${{ startsWith(github.ref, 'refs/tags/') }}" = "true" ]; then
             VERSION_TAGS="${VERSION_PREFIX}${GITHUB_REF_NAME} ${LITE_VERSION_PREFIX}${GITHUB_REF_NAME}"
             WH_VERSION_TAG="${VERSION_PREFIX}${GITHUB_REF_NAME}-wheelhouse"
+          elif [ "${{ inputs.push }}" != "true" ]; then
+            RT_TAGS="${VERSION_PREFIX}dev"
+            WH_TAGS="${VERSION_PREFIX}dev-wheelhouse"
           fi
 
-          merge_one /tmp/digests/wheelhouse ${WHEELHOUSE_TAGS} ${WH_VERSION_TAG}
-          merge_one /tmp/digests/runtime ${LATEST_TAGS} ${VERSION_TAGS}
+          merge_one /tmp/digests/wheelhouse ${WH_TAGS} ${WH_VERSION_TAG}
+          merge_one /tmp/digests/runtime ${RT_TAGS} ${VERSION_TAGS}
 
-          ALL_TAGS="${WHEELHOUSE_TAGS} ${LATEST_TAGS} ${VERSION_TAGS} ${WH_VERSION_TAG}"
+          ALL_TAGS="${WH_TAGS} ${RT_TAGS} ${VERSION_TAGS} ${WH_VERSION_TAG}"
           ALL_TAGS=$(printf '%s\n' ${ALL_TAGS} | awk '!seen[$0]++' | tr '\n' ' ')
           echo "TAGS=${ALL_TAGS}" >> "$GITHUB_ENV"
           echo "最终标签：${ALL_TAGS}"
