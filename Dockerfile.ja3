@@ -154,27 +154,24 @@ RUN if [ -n "${APK_MIRROR}" ]; then \
 RUN --mount=type=bind,from=build,source=/wheels,target=/w \
     apk add --no-cache $(cat /w/system-packages.txt) uv
 
-# armv6 上不用 uv：uv 是 Rust + tokio 的重并发程序，在 QEMU 模拟的 armv6 上装 wheel 会挂死
-# ——verbose 日志停在 "marker environment resolution took" 之后、安装阶段之前，几十小时
-# 零输出，压并发到 1 也没用。armv6 改用 pip（纯 Python、单线程），装完把 pip 删掉。
-# （注释必须写在 RUN 之前：Docker 会把续行拼成一行，行内 # 会把后面的命令全注释掉。）
+# QEMU 下 uv 装 wheel 会挂死（日志停在 "marker environment resolution took" 之后，几十小时
+# 零输出）。上游有两个相关报告：issue #16024 是 uv 在 QEMU 下 segfault（被判定为 QEMU 的
+# bug）；PR #544 是 QEMU 这类慢环境触发 bytecode 编译超时，因此引入了
+# UV_COMPILE_BYTECODE_TIMEOUT。这里两个都关掉：pycurl 是 C 扩展，几乎没有需要预编译的
+# .py，跳过字节码编译没有代价。
+#
+# 排查期的日志：RUST_LOG=uv=trace + 连续三个 -v。输出很大，定位完应降回默认
+# （去掉 RUST_LOG 与多余的 -v），否则每次构建的日志都会膨胀。
+# 注释必须写在 RUN 之前：Docker 把续行拼成一行，行内 # 会把后面的命令整段注释掉。
 RUN --mount=type=bind,from=build,source=/wheels,target=/w \
     set -eux; \
-    if [ "$(uname -m)" = "armv6l" ]; then \
-        apk add --no-cache py3-pip; \
-        python3 -m pip install --no-cache-dir --break-system-packages \
-            --index-url "${PIP_MIRROR:-https://pypi.org/simple}" \
-            --extra-index-url file:///w/simple \
-            "pycurl==${PYCURL_VERSION}"; \
-        python3 -m pip check; \
-        apk del py3-pip; \
-    else \
-        uv pip install --system --break-system-packages --no-cache \
-            --index-url "${PIP_MIRROR:-https://pypi.org/simple}" \
-            --extra-index-url file:///w/simple \
-            "pycurl==${PYCURL_VERSION}"; \
-        uv pip check --system; \
-    fi; \
+    RUST_LOG=uv=trace uv pip install --system --break-system-packages --no-cache \
+        -vvv \
+        --no-compile-bytecode \
+        --index-url "${PIP_MIRROR:-https://pypi.org/simple}" \
+        --extra-index-url file:///w/simple \
+        "pycurl==${PYCURL_VERSION}"; \
+    uv pip check --system; \
     python3 -c "import pycurl; print(pycurl.version)"
 
 
