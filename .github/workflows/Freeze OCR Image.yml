@@ -44,6 +44,21 @@ jobs:
           set -euo pipefail
           src="${{ inputs.repository }}:${{ inputs.source }}"
           dst="${{ inputs.repository }}:${{ inputs.target }}"
+
+          # 目标必须是 *-ocr：冻结标签的语义是「某个形态的最后一版」，名字写错就毁了约定
+          case "${{ inputs.target }}" in
+            *-ocr) ;;
+            *) echo "::error::目标标签必须以 -ocr 结尾（当前 ${{ inputs.target }}）"; exit 1 ;;
+          esac
+
+          # 幂等：已冻结过就不动。冻结是一次性操作——latest-ocr 记录的是「最后一个带 OCR
+          # 的版本」，再冻结一次会用当前 latest（已无 OCR）覆盖它，冻结点就没了。
+          if docker buildx imagetools inspect "$dst" >/dev/null 2>&1; then
+            echo "::notice::$dst 已存在，跳过（冻结是一次性操作，不覆盖已有的冻结点）"
+            docker buildx imagetools inspect "$dst" --format '{{.Manifest.Digest}}'
+            exit 0
+          fi
+
           before="$(docker buildx imagetools inspect "$src" --format '{{.Manifest.Digest}}')"
           docker buildx imagetools create -t "$dst" "$src"
           after="$(docker buildx imagetools inspect "$dst" --format '{{.Manifest.Digest}}')"
