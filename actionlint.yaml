@@ -1,6 +1,0 @@
-# actionlint 配置：声明仓库里用到的自建 runner label，否则 actionlint 会把它们
-# 当成未知的 runner 标签报出来（误报）。
-self-hosted-runner:
-  labels:
-    - ubuntu-24.04-riscv
-    - ubuntu-24.04-arm
