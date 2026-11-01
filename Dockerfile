@@ -22,7 +22,7 @@ FROM ${BASE_IMAGE} AS build
 ARG APK_MIRROR=""
 ARG PIP_MIRROR=""
 ARG GIT_DOMAIN="https://github.com"
-ARG PYCURL_VERSION=7.48.0
+ARG PYCURL_VERSION=7.49.0
 # OpenSSL 3.5 为 LTS（支持至 2030-04），3.5.0+ 原生提供 QUIC API，ngtcp2 1.12+ 可直接对接，
 # 无需已废弃的 quictls fork。Alpine 3.24 的 openssl 已是 3.5.9（与本文件旧版自编版本同号），
 # 直接用发行版包：省一次全量编译，CA 路径也天然是 /etc/ssl
@@ -166,7 +166,7 @@ COPY --from=build /wheels/ /wheels/
 ########################################################################
 FROM ${BASE_IMAGE} AS runtime
 
-ARG PYCURL_VERSION=7.48.0
+ARG PYCURL_VERSION=7.49.0
 ARG APK_MIRROR=""
 ARG PIP_MIRROR=""
 

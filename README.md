@@ -48,7 +48,7 @@ RUN --mount=type=bind,from=a76yyyy/pycurl:wheelhouse,source=/wheels,target=/w1 \
     uv pip install --system --break-system-packages --no-cache \
         --index-url https://pypi.org/simple \
         --extra-index-url file:///w1/simple \
-        "pycurl==7.48.0"
+        "pycurl==7.49.0"
 ```
 
 | 写法 | 原因 |
@@ -72,7 +72,7 @@ RUN --mount=type=bind,from=a76yyyy/pycurl:wheelhouse,source=/wheels,target=/w1 \
 | curl | 8.23.0（自编） | curl-impersonate（固定 commit `df38987`，基于 curl 8.23.0） |
 | TLS 库 | OpenSSL 3.5.9（Alpine 包，随 wheel 一起打进去） | BoringSSL（随 curl-impersonate 静态链接） |
 | HTTP/3 后端 | ngtcp2 1.25.0 + nghttp3 1.18.0（自编） | ngtcp2 + BoringSSL |
-| pycurl | 7.48.0 | 7.48.0 + `patches/pycurl-impersonate.patch`（`pycurl.IMPERSONATE`） |
+| pycurl | 7.49.0 | 7.49.0 + `patches/pycurl-impersonate.patch`（`pycurl.IMPERSONATE`） |
 | 系统包 | `python3`、`ca-certificates`、`tzdata`（见「产物」） | 同左 |
 | 包管理器 | `uv` | `uv` |
 | C 依赖位置 | `site-packages/pycurl.libs/` | 同左 |
@@ -175,7 +175,7 @@ docker buildx build --platform linux/arm64 --target wheel -f Dockerfile.ja3 \
 |---|---|---|
 | `ALPINE_VERSION` | `3.24` | 决定 Python 版本与 wheel 的 `cpXX` tag |
 | `BASE_IMAGE` | `alpine:${ALPINE_VERSION}` | loong64 传 `ghcr.io/loong64/alpine:3.24` |
-| `PYCURL_VERSION` | `7.48.0` | 与 wheel 名、`SHA256SUMS` 一致 |
+| `PYCURL_VERSION` | `7.49.0` | 与 wheel 名、`SHA256SUMS` 一致 |
 | `CURL_VERSION` | `8.23.0` | 仅 `Dockerfile` |
 | `NGTCP2_VERSION` / `NGHTTP3_VERSION` | `1.25.0` / `1.18.0` | 仅 `Dockerfile` |
 | `CURL_IMPERSONATE_REF` | `df38987…` | 仅 `Dockerfile.ja3`；上游已删 v2.4.0 标签，固定 commit |
@@ -231,7 +231,7 @@ c.perform()
 
 | 参数 | 作用 | 默认值 |
 |---|---|---|
-| `pycurl_version` | pycurl 版本（从 PyPI sdist 自编） | 7.48.0 |
+| `pycurl_version` | pycurl 版本（从 PyPI sdist 自编） | 7.49.0 |
 | `curl_version` | curl 源码版本（自编 libcurl） | 8.23.0 |
 | `ngtcp2_version` | ngtcp2 源码版本（HTTP/2 over QUIC） | 1.25.0 |
 | `nghttp3_version` | nghttp3 源码版本（HTTP/3） | 1.18.0 |

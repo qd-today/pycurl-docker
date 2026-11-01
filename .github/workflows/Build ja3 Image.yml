@@ -36,19 +36,19 @@ on:
         type: string
         default: ''
       pycurl_version:
-        description: '指定 pycurl 版本（留空 = Dockerfile 默认值 7.48.0）'
+        description: '指定 pycurl 版本（留空 = Dockerfile 里的默认值）'
         type: string
         default: ''
       curl_version:
-        description: '指定 curl 版本（留空 = Dockerfile 默认值 8.23.0）'
+        description: '指定 curl 版本（留空 = Dockerfile 里的默认值）'
         type: string
         default: ''
       ngtcp2_version:
-        description: '指定 ngtcp2 版本（留空 = Dockerfile 默认值 1.25.0）'
+        description: '指定 ngtcp2 版本（留空 = Dockerfile 里的默认值）'
         type: string
         default: ''
       nghttp3_version:
-        description: '指定 nghttp3 版本（留空 = Dockerfile 默认值 1.18.0）'
+        description: '指定 nghttp3 版本（留空 = Dockerfile 里的默认值）'
         type: string
         default: ''
       force:
