@@ -1,0 +1,56 @@
+name: Freeze OCR Image
+
+# 把当前还在带 OCR 的镜像复制到一个不再滚动的标签上，作为「最后带 OCR 的版本」冻结。
+#
+# 背景：pycurl 的镜像从 2.0 起不再集成 OCR（latest 与 lite-latest 合并成同一个瘦镜像）。
+# 直接覆盖 latest 会让还在用 OCR 的外部用户静默拿到没有 OCR 的镜像，所以先冻结：
+# 把覆盖前的 manifest 复制到 latest-ocr / ja3-latest-ocr，之后覆盖 latest 也不影响他们。
+#
+# 冻结后的标签不再更新，内容与源标签在冻结那一刻完全一致（digest 相同）。
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: '要冻结的源标签（当前带 OCR 的那一份）'
+        type: string
+        default: 'latest'
+      target:
+        description: '冻结后的标签名'
+        type: string
+        default: 'latest-ocr'
+      repository:
+        description: '镜像仓库'
+        type: string
+        default: 'a76yyyy/pycurl'
+
+jobs:
+  freeze:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Copy manifest to the frozen tag
+        run: |
+          set -euo pipefail
+          src="${{ inputs.repository }}:${{ inputs.source }}"
+          dst="${{ inputs.repository }}:${{ inputs.target }}"
+          before="$(docker buildx imagetools inspect "$src" --format '{{.Manifest.Digest}}')"
+          docker buildx imagetools create -t "$dst" "$src"
+          after="$(docker buildx imagetools inspect "$dst" --format '{{.Manifest.Digest}}')"
+          echo "源     $src -> $before"
+          echo "冻结后 $dst -> $after"
+          if [ "$before" != "$after" ]; then
+            echo "::error::冻结后的 digest 与源不一致，冻结失败"
+            exit 1
+          fi
+          echo "冻结完成：$dst 与 $src 指向同一个 manifest，后续不再更新 $dst"
