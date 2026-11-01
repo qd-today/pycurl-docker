@@ -139,14 +139,16 @@ RUN set -eux; \
     ls -1 /opt/curl-cli
 
 
+# 自检装的就是刚编出的那一个 wheel：用 --no-index 是有意的——不给索引参与的机会，
+# 确保验证的就是这个产物本身。与 runtime 的消费方式（extra-index）无关。
+# 注释必须写在 RUN 之前：Docker 把续行拼成一行，行内 # 会把后面的命令整段注释掉。
+# 这段自检之前就是这样被静默跳过的——HTTP3 断言一直没真正执行过。
 RUN set -eux; \
     python3 /usr/local/bin/pack_wheel.py --emit-index --out-dir /wheels; \
     cd /wheels; \
     sha256sum ./*.whl > SHA256SUMS; \
     ls -l; \
     cat SHA256SUMS; \
-    # 自检装的就是刚编出的那一个 wheel：这里用 --no-index 是有意的——不给索引参与
-    # 的机会，确保验证的就是这个产物本身。与 runtime 的消费方式（extra-index）无关。
     python3 -m pip install --no-cache-dir --break-system-packages \
         --no-index --find-links /wheels "pycurl==${PYCURL_VERSION}"; \
     python3 -c "import pycurl; assert pycurl.version_info()[4] & pycurl.CURL_VERSION_HTTP3"
@@ -182,18 +184,29 @@ RUN if [ -n "${APK_MIRROR}" ]; then \
 RUN --mount=type=bind,from=build,source=/wheels,target=/w \
     apk add --no-cache $(cat /w/system-packages.txt) uv
 
-# --no-index + --find-links：保证 pycurl 一定来自这个 wheelhouse，而不是 PyPI 上的旧版本。
-# --no-cache：否则解压副本会写进 /root/.cache/uv，原样留在镜像层里
+# --extra-index-url 指向 wheelhouse 的 PEP 503 索引，--index-url 保底走 PyPI：
+# 本地有同名包一定优先（实测过）。--no-cache：否则解压副本会留在镜像层里。
+# armv6 上不用 uv：uv 是 Rust + tokio 的重并发程序，在 QEMU 模拟的 armv6 上装 wheel 会挂死
+# ——verbose 日志停在 "marker environment resolution took" 之后、安装阶段之前，几十小时
+# 零输出，压并发到 1 也没用。armv6 改用 pip（纯 Python、单线程），装完把 pip 删掉。
+# （注释必须写在 RUN 之前：Docker 会把续行拼成一行，行内 # 会把后面的命令全注释掉。）
 RUN --mount=type=bind,from=build,source=/wheels,target=/w \
     set -eux; \
-    # armv6 走 QEMU 时 nproc 报的是宿主核数，uv 照着开并发，在 QEMU 的 futex 上会挂死
-    # （表现为 uv pip install 长时间零输出）。并发压到 1 顺序执行。
-    export UV_CONCURRENT_DOWNLOADS=1 UV_CONCURRENT_INSTALLS=1; \
-    uv pip install --system --break-system-packages --no-cache --verbose \
-        --index-url "${PIP_MIRROR:-https://pypi.org/simple}" \
-        --extra-index-url file:///w/simple \
-        "pycurl==${PYCURL_VERSION}"; \
-    uv pip check --system; \
+    if [ "$(uname -m)" = "armv6l" ]; then \
+        apk add --no-cache py3-pip; \
+        python3 -m pip install --no-cache-dir --break-system-packages \
+            --index-url "${PIP_MIRROR:-https://pypi.org/simple}" \
+            --extra-index-url file:///w/simple \
+            "pycurl==${PYCURL_VERSION}"; \
+        python3 -m pip check; \
+        apk del py3-pip; \
+    else \
+        uv pip install --system --break-system-packages --no-cache \
+            --index-url "${PIP_MIRROR:-https://pypi.org/simple}" \
+            --extra-index-url file:///w/simple \
+            "pycurl==${PYCURL_VERSION}"; \
+        uv pip check --system; \
+    fi; \
     python3 -c "import pycurl; print(pycurl.version)"
 
 
