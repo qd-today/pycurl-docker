@@ -198,10 +198,16 @@ RUN --mount=type=bind,from=build,source=/wheels,target=/w \
 # 架构判断必须用 TARGETARCH/TARGETVARIANT：uname -m 在 buildkit 的 RUN 里拿到的是构建
 # 环境的内核架构（armv6 构建实测返回 aarch64），曾因此让这个分支完全没生效。
 #
-# 升级 uv 解决不了，别再试：musllinux 里 32 位 ARM 只有 armv7l 这一个标签，armv6 的
-# wheel 只能标 armv7l，各家判定不一致——uv 0.11.19 认兼容、装 wheel 时挂死；
-# uv 0.13.6 认不兼容、回退 sdist 编译（runtime 阶段没有 curl 头文件，必然失败）；
-# 只有 pip 认兼容且装得进去（实测 14 秒）。
+# 关于 armv6 的 tag：Python/musllinux 里确实有 armv6l（uv 有专门的 is_armv6l 判定，
+# 见 astral-sh/uv#2417 / #17328），但 Alpine armhf 容器里的 Python 自报
+# linux-armv7（CI 日志：cpython-3.14.10-linux-armv7-musl），于是 auditwheel 打出来的
+# wheel 叫 musllinux_1_2_armv7l 而不是 armv6l——tag 与真实指令集不一致。
+# 各家安装器对这种不一致的处理不同：uv 0.11.19 认兼容、装的时候挂死；pip 认兼容且
+# 14 秒装好（实测）。上游 PR #2417 也写明 armv6 的产物不上传 PyPI，只走 GitHub Release。
+#
+# 同一类坑本项目已经踩过：arm 容器在原生 arm64 runner 上由内核 compat 模式执行时，
+# uname -m 报 aarch64（见 ddddocr-docker/Dockerfile 里 OpenCV 那段的注释与
+# -DCMAKE_UNAME shim）。凡是按架构分支，一律用 TARGETARCH/TARGETVARIANT，不看 uname。
 # 注释必须写在 RUN 之前：Docker 把续行拼成一行，行内 # 会把后面的命令整段注释掉。
 RUN --mount=type=bind,from=build,source=/wheels,target=/w \
     set -eux; \
