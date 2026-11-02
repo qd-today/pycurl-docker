@@ -124,7 +124,6 @@ jobs:
       runtime_matrix: ${{ steps.plan.outputs.runtime_matrix }}
       smoke_matrix: ${{ steps.plan.outputs.smoke_matrix }}
       expected: ${{ steps.plan.outputs.expected }}
-      platforms: ${{ steps.plan.outputs.platforms }}
       full: ${{ steps.plan.outputs.full }}
       skip: ${{ steps.changes.outputs.skip }}
     steps:
@@ -557,11 +556,11 @@ jobs:
           merge-multiple: true
       - name: Guard - digest completeness
         env:
-          EXPECTED_PLATFORMS: ${{ needs.plan.outputs.platforms }}
+          EXPECTED: ${{ needs.plan.outputs.expected }}
         # artifact 跨 job 传递，缺一个架构组会静默合并出残缺 index，合并前按组数核对
         run: |
           set -euo pipefail
-          want=$(printf '%s' "$EXPECTED_PLATFORMS" | tr ',' '\n' | grep -c .)
+          want=$(printf '%s' "$EXPECTED" | tr ',' '\n' | grep -c .)
           for kind in wheelhouse runtime; do
             got=$(find "/tmp/digests/$kind" -name '*.digest' | grep -c . || true)
             echo "$kind: $got / $want digest"

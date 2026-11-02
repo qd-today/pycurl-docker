@@ -115,6 +115,4 @@ print("wheel_matrix=" + json.dumps({"include": wheel_matrix}))
 print("runtime_matrix=" + json.dumps({"include": runtime_matrix}))
 print("smoke_matrix=" + json.dumps({"include": smoke}))
 print("expected=" + ",".join(sorted(plats)))
-# 每个平台各产出一个 digest 文件，publish 合并前按平台数核对完整性
-print("platforms=" + ",".join(sorted(plats)))
 print("full=%s" % str(sorted(plats) == sorted(default)).lower())
