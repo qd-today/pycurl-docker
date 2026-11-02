@@ -1,53 +1,36 @@
 name: Probe armv6
-# 临时诊断：判断 armv6 卡死是 uv 的问题、pycurl wheel 的问题，还是 armv6 QEMU 环境本身的问题。
-# 三组对照：
-#   1) uv 装纯 Python 包（six）        -> uv 在 armv6 上是否普遍可用
-#   2) uv 装带 .so 的包（pycurl）      -> 是否与扩展模块有关
-#   3) pip 装同一个包                  -> 换安装器是否绕过
+# 临时诊断：uv 0.11.19（alpine apk）在 armv6 上装带 .so 的 wheel 会挂死。
+# 这里测官方最新的 uv（0.13.6）是否已修复——如果修复，就统一用 uv，不必为 armv6 维护 pip 分支。
 on:
   workflow_dispatch:
 
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 25
     steps:
       - uses: docker/setup-qemu-action@v3
-      - name: 环境事实
+      - name: uv 0.11.19（alpine apk）装 pycurl —— 复现基线
+        timeout-minutes: 8
+        continue-on-error: true
         run: |
           docker run --rm --platform linux/arm/v6 alpine:3.24 sh -c '
-            echo "uname -m: $(uname -m)"
             apk add -q python3 uv
             echo "uv: $(uv --version)"
-            echo "python: $(python3 -V)"
-            echo "nproc: $(nproc)"
-          '
-      - name: 1) uv 装纯 Python 包
-        timeout-minutes: 8
-        run: |
-          docker run --rm --platform linux/arm/v6 alpine:3.24 sh -c '
-            apk add -q python3 uv
-            start=$(date +%s)
-            uv pip install --system --break-system-packages --no-cache six
-            echo "耗时: $(( $(date +%s) - start ))s"
-          '
-      - name: 2) uv 装带 .so 的包
-        timeout-minutes: 8
-        run: |
-          docker run --rm --platform linux/arm/v6 alpine:3.24 sh -c '
-            apk add -q python3 uv
             start=$(date +%s)
             uv pip install --system --break-system-packages --no-cache --no-compile-bytecode "pycurl==7.49.0"
             echo "耗时: $(( $(date +%s) - start ))s"
-            python3 -c "import pycurl; print(pycurl.version)"
           '
-      - name: 3) pip 装同一个包（对照）
-        timeout-minutes: 8
+      - name: uv 0.13.6（官方 armv6 musl 二进制）装 pycurl
+        timeout-minutes: 10
         run: |
           docker run --rm --platform linux/arm/v6 alpine:3.24 sh -c '
-            apk add -q python3 py3-pip
+            apk add -q python3 curl
+            curl -sSfL https://github.com/astral-sh/uv/releases/download/0.13.6/uv-arm-unknown-linux-musleabihf.tar.gz \
+              | tar xz -C /usr/local/bin --strip-components=1
+            echo "uv: $(uv --version)"
             start=$(date +%s)
-            python3 -m pip install --no-cache-dir --break-system-packages "pycurl==7.49.0"
+            uv pip install --system --break-system-packages --no-cache "pycurl==7.49.0"
             echo "耗时: $(( $(date +%s) - start ))s"
             python3 -c "import pycurl; print(pycurl.version)"
           '
