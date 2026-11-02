@@ -33,6 +33,7 @@ jobs:
           '
 
       - name: 构建真实的 pycurl armv6 wheel
+        timeout-minutes: 45
         run: |
           mkdir -p /tmp/wheels
           docker buildx build --platform linux/arm/v6 --target wheel \
@@ -41,7 +42,7 @@ jobs:
 
       - name: A) uv 0.11.19（alpine apk）装真实 wheel
         timeout-minutes: 8
-        continue-on-error: true
+        if: always()
         run: |
           docker run --rm --platform linux/arm/v6 -v /tmp/wheels:/w alpine:3.24 sh -c '
             apk add -q python3 uv
@@ -53,7 +54,7 @@ jobs:
 
       - name: B) uv 0.13.6（官方 armv6 musl 二进制）装真实 wheel
         timeout-minutes: 8
-        continue-on-error: true
+        if: always()
         run: |
           docker run --rm --platform linux/arm/v6 -v /tmp/wheels:/w alpine:3.24 sh -c '
             apk add -q python3 curl
@@ -67,6 +68,7 @@ jobs:
 
       - name: C) pip 装真实 wheel（对照）
         timeout-minutes: 8
+        if: always()
         run: |
           docker run --rm --platform linux/arm/v6 -v /tmp/wheels:/w alpine:3.24 sh -c '
             apk add -q python3 py3-pip
