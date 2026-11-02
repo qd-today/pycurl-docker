@@ -223,25 +223,26 @@ RUN if [ -n "${APK_MIRROR}" ]; then \
     fi \
  && cat /etc/apk/repositories
 
-# 清单写错会在这里构建失败，不会等到上层才发现。uv 是工具不是运行时依赖，单独列出
-RUN --mount=type=bind,from=wheelsrc,source=wheels,target=/w \
-    apk add --no-cache $(cat /w/system-packages.txt) uv
-
+# 清单写错会在这里构建失败，不会等到上层才发现。
+#
+# uv 只用来装 wheel：它是 27 MiB 的独立二进制，装完必须删掉，否则白占镜像体积
+# （实测 dev 镜像里 uv 一个就占 27 MB）。删除必须和安装发生在同一个 RUN 里——
+# 分成两层的话，删掉的字节仍留在下层，镜像不会变小。
+#
 # --extra-index-url 指向 wheelhouse 的 PEP 503 索引，--index-url 保底走 PyPI：
 # 本地有同名包一定优先（实测过）。--no-cache：否则解压副本会留在镜像层里。
 # 统一用 uv：runtime 组装在 x86_64 上跑（见 wheelsrc 那段说明），QEMU 模拟 armv6 时
 # Python 报 linux-armv7l，与 wheel 的 musllinux_1_2_armv7l 匹配，uv 装 1-2 秒完成。
-# 之前 armv6 之所以要退回 pip，是因为它和 arm64/armv7 挤在同一个 arm64 runner 上，
-# 那里 Python 报 linux-aarch64，uv 会挂死（probe 实测：x86_64 两版 uv 都通过，
-# arm64 runner 上两版都超时，pip 能过）。拆开后不需要这个特例了。
 RUN --mount=type=bind,from=wheelsrc,source=wheels,target=/w \
     set -eux; \
+    apk add --no-cache $(cat /w/system-packages.txt) uv; \
     uv pip install --system --break-system-packages --no-cache --no-compile-bytecode \
         --index-url "${PIP_MIRROR:-https://pypi.org/simple}" \
         --extra-index-url file:///w/simple \
         "pycurl==${PYCURL_VERSION}"; \
     uv pip check --system; \
-    python3 -c "import pycurl; print(pycurl.version)"
+    python3 -c "import pycurl; print(pycurl.version)"; \
+    apk del uv
 
 
 # curl 命令行：二进制与它的私有库放在一起，用包装脚本限定 LD_LIBRARY_PATH 的作用域，
