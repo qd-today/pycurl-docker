@@ -120,10 +120,11 @@ jobs:
     permissions:
       contents: read
     outputs:
-      matrix: ${{ steps.plan.outputs.matrix }}
+      wheel_matrix: ${{ steps.plan.outputs.wheel_matrix }}
+      runtime_matrix: ${{ steps.plan.outputs.runtime_matrix }}
       smoke_matrix: ${{ steps.plan.outputs.smoke_matrix }}
       expected: ${{ steps.plan.outputs.expected }}
-      groups: ${{ steps.plan.outputs.groups }}
+      platforms: ${{ steps.plan.outputs.platforms }}
       full: ${{ steps.plan.outputs.full }}
       skip: ${{ steps.changes.outputs.skip }}
     steps:
@@ -203,31 +204,33 @@ jobs:
           # 矩阵逻辑在 .github/workflows/scripts/plan.py，这里只负责落到 $GITHUB_OUTPUT
           set -euo pipefail
           python3 .github/workflows/scripts/plan.py > /tmp/plan.out
-          echo "--- 构建矩阵 ---"
-          sed -n 's/^matrix=//p' /tmp/plan.out | python3 -m json.tool
+          echo "--- wheel 矩阵 ---"
+          sed -n 's/^wheel_matrix=//p' /tmp/plan.out | python3 -m json.tool
+          echo "--- runtime 矩阵 ---"
+          sed -n 's/^runtime_matrix=//p' /tmp/plan.out | python3 -m json.tool
           echo "--- 冒烟矩阵 ---"
           sed -n 's/^smoke_matrix=//p' /tmp/plan.out | python3 -m json.tool
           echo "--- 其余 ---"
-          grep -Ev '^(matrix|smoke_matrix)=' /tmp/plan.out
+          grep -Ev '^(wheel_matrix|runtime_matrix|smoke_matrix)=' /tmp/plan.out
           cat /tmp/plan.out >> "$GITHUB_OUTPUT"
 
-  build:
+  # 第一段：编 wheel，把产物导出成 artifact。
+  #
+  # 按平台拆 job 是硬约束——--output type=local 不支持多平台。顺带把并行度提上去了：
+  # 原来 arm 组一次串行编三个架构（curl + BoringSSL）要一小时，现在每个平台几分钟、
+  # 彼此并行。runner 挑编译最快的：arm 三兄弟都放原生 arm64（armv6 那边 2 分钟，
+  # QEMU 下要 32 分钟）。
+  build-wheel:
     needs: plan
-    name: Build ${{ matrix.group }} (${{ matrix.platforms }})
-    # 仅文档改动或该 commit 已验证过时跳过（tag 发布不会被跳过）
+    name: Wheel ${{ matrix.platform }}
     if: ${{ needs.plan.outputs.skip != 'true' }}
     runs-on: ${{ matrix.runner }}
-    # QEMU 架构要模拟全量编译 curl（ja3 线还要再加 BoringSSL 与 nghttp3/ngtcp2），
-    # 给到 GitHub 单 job 上限附近，避免慢架构被超时误杀
-    # 6 小时太长：卡住时不会自动失败，白占 runner。正常最慢的 arm 组（三架构 + BoringSSL）
-    # 一小时内能完成，150 分钟留足余量。
-    timeout-minutes: 150
+    timeout-minutes: 120
     permissions:
       contents: read
-      packages: write
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+      matrix: ${{ fromJSON(needs.plan.outputs.wheel_matrix) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -245,11 +248,102 @@ jobs:
             fi
           done
           echo "出口 stage 齐全（wheel + runtime）"
+      - name: Compose build args
+        id: args
+        # 只在非空时传 PYCURL_VERSION：直接传空串会把 Dockerfile 里的默认值覆盖成空，
+        # 变成 `pip install "pycurl=="`。build 与 smoke 必须产出完全相同的 build-args，
+        # 否则缓存 scope 命中不了，冒烟阶段会退化成全量重编译
+        env:
+          V: ${{ inputs.pycurl_version }}
+          A: ${{ inputs.alpine_version }}
+          CV: ${{ inputs.curl_version }}
+          N2: ${{ inputs.ngtcp2_version }}
+          N3: ${{ inputs.nghttp3_version }}
+          BASE_IMAGE: ${{ matrix.base_image }}
+        run: |
+          set -euo pipefail
+          {
+            echo "args<<__BUILD_ARGS__"
+            [ -z "$V" ] || echo "PYCURL_VERSION=$V"
+            [ -z "$A" ] || echo "ALPINE_VERSION=$A"
+            [ -z "$CV" ] || echo "CURL_VERSION=$CV"
+            [ -z "$N2" ] || echo "NGTCP2_VERSION=$N2"
+            [ -z "$N3" ] || echo "NGHTTP3_VERSION=$N3"
+            [ -z "$BASE_IMAGE" ] || echo "BASE_IMAGE=$BASE_IMAGE"
+            echo "__BUILD_ARGS__"
+          } >> "$GITHUB_OUTPUT"
+          echo "构建参数：PYCURL_VERSION=${V:-<默认>} CURL_VERSION=${CV:-<默认>} NGTCP2_VERSION=${N2:-<默认>} NGHTTP3_VERSION=${N3:-<默认>} ALPINE_VERSION=${A:-<默认>} BASE_IMAGE=${BASE_IMAGE:-<默认>}"
       - name: Set up QEMU
-        # 组内跨架构平台（arm 组的 armv7/armv6、x86 组的 386 等）需要 binfmt
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+      - name: Build artifacts
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./${{ matrix.file }}
+          # artifacts 出口 = /wheels + /opt/curl-cli，第二段全靠它，不再回依赖 build stage
+          target: artifacts
+          platforms: ${{ matrix.platform }}
+          # 单平台才能用 local 导出；两个 registry 的镜像由第二段从这份产物重建
+          outputs: type=local,dest=./dist
+          build-args: ${{ steps.args.outputs.args }}
+          provenance: false
+          cache-from: type=gha,scope=pycurl-${{ inputs.line }}-${{ matrix.arch }}${{ inputs.cache_bust }}
+          cache-to: type=gha,mode=max,scope=pycurl-${{ inputs.line }}-${{ matrix.arch }}${{ inputs.cache_bust }},ignore-error=true
+      - name: Show artifacts
+        run: |
+          set -euo pipefail
+          find dist -name '*.whl' | sort
+          find dist -name SHA256SUMS -exec cat {} \; || true
+          find dist -name system-packages.txt -exec cat {} \; || true
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-${{ matrix.arch }}
+          path: dist
+          retention-days: 1
+          if-no-files-found: error
+
+  # 第二段：用第一段的产物组装两个出口，推 digest。
+  #
+  # 统一跑 x86_64：arm64 runner 走内核 compat 模式时 Python 自报 linux-aarch64，
+  # uv 在那装 armv7l 的 wheel 会挂死（probe 实测两版 uv 都超时、pip 才能过）；
+  # x86_64 + QEMU 下 Python 报 linux-armv7l，与 wheel 匹配，uv 装 1-2 秒。
+  build:
+    needs: [plan, build-wheel]
+    name: Runtime ${{ matrix.platform }}
+    if: ${{ needs.plan.outputs.skip != 'true' && needs.build-wheel.result == 'success' }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.runtime_matrix) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: artifacts-${{ matrix.arch }}
+          path: ./dist
+      - name: Guard - dockerfile exposes both exits
+        # 双出口流水线要求 Dockerfile 同时有 `wheel` 与 `runtime` stage，缺一个时 buildx
+        # 只会报 "target stage ... could not be found"，看不懂；这里提前给出明确错误
+        env:
+          DOCKERFILE: ${{ matrix.file }}
+        run: |
+          set -euo pipefail
+          for stage in wheel runtime; do
+            if ! grep -qE "^FROM[[:space:]].*[[:space:]]AS[[:space:]]+${stage}[[:space:]]*$" "$DOCKERFILE"; then
+              echo "::error::${DOCKERFILE} 没有 \`AS ${stage}\` 出口 stage，双出口流水线无法构建。"
+              exit 1
+            fi
+          done
+          echo "出口 stage 齐全（wheel + runtime）"
       - name: Login to Docker Hub
         if: env.PUBLISH == 'true'
         uses: docker/login-action@v3
@@ -288,91 +382,70 @@ jobs:
             echo "__BUILD_ARGS__"
           } >> "$GITHUB_OUTPUT"
           echo "构建参数：PYCURL_VERSION=${V:-<默认>} CURL_VERSION=${CV:-<默认>} NGTCP2_VERSION=${N2:-<默认>} NGHTTP3_VERSION=${N3:-<默认>} ALPINE_VERSION=${A:-<默认>} BASE_IMAGE=${BASE_IMAGE:-<默认>}"
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
       - name: Build wheelhouse image
         id: wheelhouse
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./${{ matrix.file }}
-          # 只到 wheel 阶段：产物就是这个 scratch 镜像里的 /wheels
-          target: wheel
-          platforms: ${{ matrix.platforms }}
-          # 发布模式按 digest 推送：各架构组并行构建，用 digest 传递产物不必协调 tag 命名。
-          # 推送开关写在 outputs 里（push=true），这样只有一条 --output，不会出现
-          # 「--push 又叠加一个 type=image」的二义性。
-          # 两个 registry 各推一份 digest：层直接推给 ghcr，publish 阶段才能用
-          # 「各自的 registry 作为源」合并 manifest——跨 registry 复制层会被 ghcr 拒绝。
+          # 从产物重建 wheelhouse：不再编译，秒级完成
+          target: wheel-from-artifacts
+          platforms: ${{ matrix.platform }}
+          build-contexts: |
+            wheelsrc=./dist
+          # 两个 registry 各推一份 digest：publish 阶段才能用「各自的 registry 作为源」
+          # 合并 manifest——跨 registry 复制层会被 ghcr 拒绝
           outputs: |
-            ${{ env.PUBLISH == 'true' && format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.IMAGE) || 'type=local,dest=./dist' }}
-            ${{ env.PUBLISH == 'true' && format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.GHCR_IMAGE) || 'type=local,dest=./dist-ghcr' }}
+            ${{ format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.IMAGE) }}
+            ${{ format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.GHCR_IMAGE) }}
           build-args: ${{ steps.args.outputs.args }}
-          # 不产 attestation 清单，保持 manifest 只有平台条目（旧客户端兼容）
           provenance: false
-          cache-from: type=gha,scope=pycurl-${{ inputs.line }}-${{ matrix.group }}${{ inputs.cache_bust }}
-          cache-to: type=gha,mode=max,scope=pycurl-${{ inputs.line }}-${{ matrix.group }}${{ inputs.cache_bust }},ignore-error=true
+          cache-from: type=gha,scope=pycurl-${{ inputs.line }}-${{ matrix.arch }}${{ inputs.cache_bust }}
+          cache-to: type=gha,mode=max,scope=pycurl-${{ inputs.line }}-${{ matrix.arch }}-runtime${{ inputs.cache_bust }},ignore-error=true
       - name: Build runtime image
-        if: env.PUBLISH == 'true'
         id: runtime
-        # 只在发布模式构建：非发布模式下冒烟 job 会自己 `--load` 出来跑，避免同一台
-        # runner 上编译两遍（build 阶段仍然从缓存命中）
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./${{ matrix.file }}
           target: runtime
-          platforms: ${{ matrix.platforms }}
+          platforms: ${{ matrix.platform }}
+          build-contexts: |
+            wheelsrc=./dist
           outputs: |
             ${{ format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.IMAGE) }}
             ${{ format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.GHCR_IMAGE) }}
           build-args: ${{ steps.args.outputs.args }}
           provenance: false
           cache-from: |
-            type=gha,scope=pycurl-${{ inputs.line }}-${{ matrix.group }}${{ inputs.cache_bust }}
-            type=gha,scope=pycurl-${{ inputs.line }}-${{ matrix.group }}-runtime${{ inputs.cache_bust }}
-          cache-to: type=gha,mode=max,scope=pycurl-${{ inputs.line }}-${{ matrix.group }}-runtime${{ inputs.cache_bust }},ignore-error=true
-      - name: Show wheelhouse
-        if: env.PUBLISH != 'true'
-        # 多平台 local 导出会按平台分目录（dist/linux_amd64/wheels/…），单平台则直接是
-        # dist/wheels/…，所以这里用 find 而不是写死路径
-        run: |
-          set -euo pipefail
-          find dist -name '*.whl' | sort
-          find dist -name SHA256SUMS -exec cat {} \;
-          find dist -name system-packages.txt -exec cat {} \;
+            type=gha,scope=pycurl-${{ inputs.line }}-${{ matrix.arch }}${{ inputs.cache_bust }}
+            type=gha,scope=pycurl-${{ inputs.line }}-${{ matrix.arch }}-runtime${{ inputs.cache_bust }}
+          cache-to: type=gha,mode=max,scope=pycurl-${{ inputs.line }}-${{ matrix.arch }}-runtime${{ inputs.cache_bust }},ignore-error=true
       - name: Export digests
-        if: env.PUBLISH == 'true'
         # 两个出口各一个 digest，分开目录存放，下游 publish 才能把两套 manifest 分清
         run: |
           set -eu
           mkdir -p /tmp/digests/wheelhouse /tmp/digests/runtime
-          echo "${{ steps.wheelhouse.outputs.digest }}" > "/tmp/digests/wheelhouse/${{ matrix.group }}.digest"
-          echo "${{ steps.runtime.outputs.digest }}" > "/tmp/digests/runtime/${{ matrix.group }}.digest"
-          echo "wheelhouse ${{ matrix.group }}: $(cat "/tmp/digests/wheelhouse/${{ matrix.group }}.digest")"
-          echo "runtime    ${{ matrix.group }}: $(cat "/tmp/digests/runtime/${{ matrix.group }}.digest")"
+          echo "${{ steps.wheelhouse.outputs.digest }}" > "/tmp/digests/wheelhouse/${{ matrix.arch }}.digest"
+          echo "${{ steps.runtime.outputs.digest }}" > "/tmp/digests/runtime/${{ matrix.arch }}.digest"
+          echo "wheelhouse ${{ matrix.arch }}: $(cat "/tmp/digests/wheelhouse/${{ matrix.arch }}.digest")"
+          echo "runtime    ${{ matrix.arch }}: $(cat "/tmp/digests/runtime/${{ matrix.arch }}.digest")"
       - name: Upload wheelhouse digest
-        if: env.PUBLISH == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: digest-wheelhouse-${{ matrix.group }}
+          name: digest-wheelhouse-${{ matrix.arch }}
           path: /tmp/digests/wheelhouse/*.digest
           retention-days: 1
           if-no-files-found: error
       - name: Upload runtime digest
-        if: env.PUBLISH == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: digest-runtime-${{ matrix.group }}
+          name: digest-runtime-${{ matrix.arch }}
           path: /tmp/digests/runtime/*.digest
-          retention-days: 1
-          if-no-files-found: error
-      - name: Upload wheelhouse
-        if: env.PUBLISH != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          # artifact 名带架构组，避免多组互相覆盖；内容是 dist 整棵树
-          # （多平台导出会按平台分子目录）
-          name: wheelhouse-${{ inputs.line }}-${{ matrix.group }}
-          path: dist
           retention-days: 1
           if-no-files-found: error
 
@@ -426,7 +499,7 @@ jobs:
         if: env.PUBLISH == 'true'
         uses: actions/download-artifact@v4
         with:
-          name: digest-runtime-${{ matrix.group }}
+          name: digest-runtime-${{ matrix.arch }}
           path: /tmp/digest
       - name: Fetch runtime image from registry
         if: env.PUBLISH == 'true'
@@ -437,24 +510,6 @@ jobs:
           docker pull --platform "${{ matrix.platform }}" "${IMAGE}@${DIGEST}"
           docker tag "${IMAGE}@${DIGEST}" "smoke:${{ matrix.arch }}"
           docker image inspect -f '{{.Id}}' "smoke:${{ matrix.arch }}"
-      - name: Build runtime image
-        if: env.PUBLISH != 'true'
-        # 非发布模式没有 registry 可拉，就地按同一个 target 构建并装进本地 docker。
-        # build 阶段命中 build job 导出的 gha 缓存，不会重跑编译
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./${{ matrix.file }}
-          target: runtime
-          platforms: ${{ matrix.platform }}
-          load: true
-          tags: smoke:${{ matrix.arch }}
-          build-args: ${{ steps.args.outputs.args }}
-          provenance: false
-          cache-from: |
-            type=gha,scope=pycurl-${{ inputs.line }}-${{ matrix.group }}${{ inputs.cache_bust }}
-            type=gha,scope=pycurl-${{ inputs.line }}-${{ matrix.group }}-runtime${{ inputs.cache_bust }}
-          cache-to: type=gha,mode=max,scope=pycurl-${{ inputs.line }}-${{ matrix.group }}-runtime${{ inputs.cache_bust }},ignore-error=true
       - name: Run smoke (${{ inputs.line }})
         env:
           PLATFORM: ${{ matrix.platform }}
@@ -502,11 +557,11 @@ jobs:
           merge-multiple: true
       - name: Guard - digest completeness
         env:
-          EXPECTED_GROUPS: ${{ needs.plan.outputs.groups }}
+          EXPECTED_PLATFORMS: ${{ needs.plan.outputs.platforms }}
         # artifact 跨 job 传递，缺一个架构组会静默合并出残缺 index，合并前按组数核对
         run: |
           set -euo pipefail
-          want=$(printf '%s' "$EXPECTED_GROUPS" | tr ',' '\n' | grep -c .)
+          want=$(printf '%s' "$EXPECTED_PLATFORMS" | tr ',' '\n' | grep -c .)
           for kind in wheelhouse runtime; do
             got=$(find "/tmp/digests/$kind" -name '*.digest' | grep -c . || true)
             echo "$kind: $got / $want digest"

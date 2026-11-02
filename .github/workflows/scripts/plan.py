@@ -49,52 +49,72 @@ def base_of(platform: str) -> str:
     return ""
 
 
-# 按「是否本机原生 + 编译量级」分组；组间完全并行，互不抢 CPU，组内串行复用层缓存。
-# ppc64le / s390x 各自成组：两者都要在 QEMU 下全量编译 curl 与 BoringSSL，合在一组会
-# 串行累加，接近单 job 时限。
-GROUPS = [
-    ("x86", "ubuntu-latest", ["linux/amd64", "linux/386"]),
-    ("arm", arm_runner, ["linux/arm64", "linux/arm/v7", "linux/arm/v6"]),
-    ("ppc64le", "ubuntu-latest", ["linux/ppc64le"]),
-    ("s390x", "ubuntu-latest", ["linux/s390x"]),
-    ("riscv64", riscv_runner, ["linux/riscv64"]),
-    ("loong64", "ubuntu-latest", ["linux/loong64"]),
+# 每个平台独立一个 job。
+#
+# 为什么按平台拆而不是按组：--output type=local 不支持多平台，而两段式构建需要把
+# wheel 从构建 job 导出给 runtime job。顺带的好处是并行度更高——原来 arm 组一次
+# 串行构建三个架构要一小时，拆开后每个平台几分钟、彼此并行。
+#
+# runner 分配：
+#   wheel   —— 挑编译最快的：arm 三兄弟都在原生 arm64（armv6 在那边编 2 分钟，
+#              QEMU 下要 32 分钟）、riscv64 用 RISE、其余 x86_64。
+#   runtime —— 统一 x86_64。arm64 runner 走内核 compat 时 Python 自报
+#              linux-aarch64，uv 在那装 armv7l 的 wheel 会挂死（实测两版 uv 都超时，
+#              pip 能过）。x86_64 + QEMU 下 Python 报 linux-armv7l，与 wheel 匹配。
+def wheel_runner(platform: str) -> str:
+    if platform in ("linux/arm64", "linux/arm/v7", "linux/arm/v6"):
+        return arm_runner
+    if platform == "linux/riscv64":
+        return riscv_runner
+    return "ubuntu-latest"
+
+
+RUNTIME_RUNNER = "ubuntu-latest"
+
+
+def arch_of(platform: str) -> str:
+    return platform.replace("linux/", "").replace("/", "-")
+
+
+wheel_matrix = [
+    {
+        "platform": p,
+        "arch": arch_of(p),
+        "runner": wheel_runner(p),
+        "base_image": base_of(p),
+        "file": os.environ["DOCKERFILE"],
+    }
+    for p in plats
 ]
 
-GROUP_OF = {p: name for name, _, members in GROUPS for p in members}
-
-include = []
-for name, runner, members in GROUPS:
-    selected = [p for p in members if p in plats]
-    if selected:
-        include.append({
-            "group": name,
-            "runner": runner,
-            "platforms": ",".join(selected),
-            "base_image": base_of(selected[0]),
-            "file": os.environ["DOCKERFILE"],
-            "arch": name,
-        })
-if not include:
-    sys.exit("::error::没有可构建的平台")
+runtime_matrix = [
+    {
+        "platform": p,
+        "arch": arch_of(p),
+        "runner": RUNTIME_RUNNER,
+        "base_image": base_of(p),
+        "file": os.environ["DOCKERFILE"],
+    }
+    for p in plats
+]
 
 smoke = [
     {
         "platform": p,
-        "group": GROUP_OF[p],
+        "arch": arch_of(p),
         "runner": (arm_runner if p == "linux/arm64"
                    else riscv_runner if p == "linux/riscv64"
                    else "ubuntu-latest"),
         "base_image": base_of(p),
         "file": os.environ["DOCKERFILE"],
-        "arch": p.replace("linux/", "").replace("/", "-"),
     }
     for p in plats
 ]
 
-print("matrix=" + json.dumps({"include": include}))
+print("wheel_matrix=" + json.dumps({"include": wheel_matrix}))
+print("runtime_matrix=" + json.dumps({"include": runtime_matrix}))
 print("smoke_matrix=" + json.dumps({"include": smoke}))
 print("expected=" + ",".join(sorted(plats)))
-# 每个架构组产出一个 digest 文件，publish 合并前按组数核对完整性
-print("groups=" + ",".join(entry["group"] for entry in include))
+# 每个平台各产出一个 digest 文件，publish 合并前按平台数核对完整性
+print("platforms=" + ",".join(sorted(plats)))
 print("full=%s" % str(sorted(plats) == sorted(default)).lower())
