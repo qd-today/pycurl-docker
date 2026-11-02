@@ -246,7 +246,10 @@ RUN --mount=type=bind,from=wheelsrc,source=wheels,target=/w \
 
 # curl 命令行：二进制与它的私有库放在一起，用包装脚本限定 LD_LIBRARY_PATH 的作用域，
 # 免得污染镜像里其他进程的库解析。
-COPY --from=wheelsrc /opt/curl-cli /opt/curl-cli
+# --chmod 是必须的：--output type=local 导出产物时会丢可执行位，再通过
+# --build-context 拷回来就没有执行权限了（冒烟时报 "can't execute: Permission denied"）。
+# 目录里还有 curl 的私有 .so，一并给 755 无害。
+COPY --chmod=0755 --from=wheelsrc /opt/curl-cli /opt/curl-cli
 RUN set -eux; \
     printf '#!/bin/sh\nexec env LD_LIBRARY_PATH=/opt/curl-cli /opt/curl-cli/curl "$@"\n' \
         > /usr/local/bin/curl; \
