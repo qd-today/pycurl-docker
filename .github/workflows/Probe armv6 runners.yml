@@ -1,0 +1,76 @@
+name: Probe armv6 runners
+# 对照实验：同一个 armv6 构建，分别跑在 x86_64（QEMU 模拟）与原生 arm64 runner（内核
+# compat 模式）上，确认「uv 装 wheel 挂死」到底是 uv 版本问题、还是 runner 的问题。
+#
+# 背景：pycurl 的 Build arm 组跑在 ubuntu-24.04-arm 上，同时构建 arm64/armv7/armv6。
+# 日志显示那里的 uname 报 aarch64（compat 模式），工具链可能因此识别错目标架构。
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 环境事实
+        run: |
+          echo "runner: ${{ matrix.runner }}"
+          docker run --rm --platform linux/arm/v6 alpine:3.24 sh -c '
+            apk add -q python3 uv gcc musl-dev
+            echo "  uname -m:          $(uname -m)"
+            echo "  gcc -dumpmachine:  $(gcc -dumpmachine)"
+            echo "  python platform:   $(python3 -c "import sysconfig; print(sysconfig.get_platform())")"
+            echo "  os.uname.machine:  $(python3 -c "import os; print(os.uname().machine)")"
+            echo "  apk uv:            $(uv --version)"
+          '
+
+      - name: 构建真实的 pycurl armv6 wheel
+        run: |
+          mkdir -p /tmp/wheels
+          docker buildx build --platform linux/arm/v6 --target wheel \
+            --output type=local,dest=/tmp/wheels .
+          ls -1 /tmp/wheels/
+
+      - name: A) uv 0.11.19（alpine apk）装真实 wheel
+        timeout-minutes: 8
+        continue-on-error: true
+        run: |
+          docker run --rm --platform linux/arm/v6 -v /tmp/wheels:/w alpine:3.24 sh -c '
+            apk add -q python3 uv
+            echo "  uv: $(uv --version)"
+            start=$(date +%s)
+            uv pip install --system --break-system-packages --no-cache --no-index --find-links /w "pycurl==7.49.0"
+            echo "  耗时: $(( $(date +%s) - start ))s"
+          '
+
+      - name: B) uv 0.13.6（官方 armv6 musl 二进制）装真实 wheel
+        timeout-minutes: 8
+        continue-on-error: true
+        run: |
+          docker run --rm --platform linux/arm/v6 -v /tmp/wheels:/w alpine:3.24 sh -c '
+            apk add -q python3 curl
+            curl -sSfL https://github.com/astral-sh/uv/releases/download/0.13.6/uv-arm-unknown-linux-musleabihf.tar.gz \
+              | tar xz -C /usr/local/bin --strip-components=1
+            echo "  uv: $(uv --version)"
+            start=$(date +%s)
+            uv pip install --system --break-system-packages --no-cache --no-index --find-links /w "pycurl==7.49.0"
+            echo "  耗时: $(( $(date +%s) - start ))s"
+          '
+
+      - name: C) pip 装真实 wheel（对照）
+        timeout-minutes: 8
+        run: |
+          docker run --rm --platform linux/arm/v6 -v /tmp/wheels:/w alpine:3.24 sh -c '
+            apk add -q python3 py3-pip
+            start=$(date +%s)
+            python3 -m pip install --no-cache-dir --break-system-packages --no-index --find-links /w "pycurl==7.49.0"
+            echo "  耗时: $(( $(date +%s) - start ))s"
+          '
