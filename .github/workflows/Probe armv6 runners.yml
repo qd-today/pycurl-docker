@@ -35,10 +35,16 @@ jobs:
 
       - name: 构建真实的 pycurl armv6 wheel
         run: |
-          mkdir -p /tmp/wheels
+          rm -rf /tmp/wheels && mkdir -p /tmp/wheels
           docker buildx build --platform linux/arm/v6 --target wheel \
             --output type=local,dest=/tmp/wheels .
+          echo "== 输出结构（type=local 导出的是完整文件系统）:"
+          find /tmp/wheels -type f | head -10
+          # wheel stage 是 FROM scratch + COPY /wheels/ /wheels/，导出来会多一层 wheels/
+          if [ -d /tmp/wheels/wheels ]; then mv /tmp/wheels/wheels/* /tmp/wheels/ && rmdir /tmp/wheels/wheels; fi
+          echo "== 拍平后:"
           ls -1 /tmp/wheels/
+          test -n "$(ls -1 /tmp/wheels/*.whl 2>/dev/null)" || { echo "::error::没有构建出 wheel"; exit 1; }
 
       - name: A) uv 0.11.19（alpine apk）装真实 wheel
         timeout-minutes: 8
@@ -46,6 +52,7 @@ jobs:
         run: |
           docker run --rm --platform linux/arm/v6 -v /tmp/wheels:/w alpine:3.24 sh -c '
             apk add -q python3 uv
+            echo "  /w 内容: $(ls -1 /w)"
             echo "  uv: $(uv --version)"
             start=$(date +%s)
             uv pip install --system --break-system-packages --no-cache --no-index --find-links /w "pycurl==7.49.0"
@@ -72,6 +79,7 @@ jobs:
         run: |
           docker run --rm --platform linux/arm/v6 -v /tmp/wheels:/w alpine:3.24 sh -c '
             apk add -q python3 py3-pip
+            echo "  /w 内容: $(ls -1 /w)"
             start=$(date +%s)
             python3 -m pip install --no-cache-dir --break-system-packages --no-index --find-links /w "pycurl==7.49.0"
             echo "  耗时: $(( $(date +%s) - start ))s"
