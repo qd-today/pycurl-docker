@@ -14,7 +14,8 @@ jobs:
       matrix:
         runner: [ubuntu-latest, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
+    # 只做兜底：卡住时不至于无限占 runner。armv6 在 QEMU 下全量编译 curl 慢，留足余量。
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
@@ -33,7 +34,6 @@ jobs:
           '
 
       - name: 构建真实的 pycurl armv6 wheel
-        timeout-minutes: 45
         run: |
           mkdir -p /tmp/wheels
           docker buildx build --platform linux/arm/v6 --target wheel \
