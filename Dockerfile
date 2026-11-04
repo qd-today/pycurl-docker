@@ -141,8 +141,8 @@ RUN set -eux; \
 
 # 自检装的就是刚编出的那一个 wheel：用 --no-index 是有意的——不给索引参与的机会，
 # 确保验证的就是这个产物本身。与 runtime 的消费方式（extra-index）无关。
-# 注释必须写在 RUN 之前：Docker 把续行拼成一行，行内 # 会把后面的命令整段注释掉。
-# 这段自检之前就是这样被静默跳过的——HTTP3 断言一直没真正执行过。
+# 注释必须写在 RUN 之前：Docker 把续行拼成一行，行内 # 会把后面的命令整段注释掉，
+# 自检步骤必须整条独立，否则整段会被静默跳过。
 RUN set -eux; \
     python3 /usr/local/bin/pack_wheel.py --emit-index --out-dir /wheels; \
     cd /wheels; \
