@@ -620,18 +620,14 @@ jobs:
             echo "::endgroup::"
           }
 
-          # tag 命名按模式分三种，避免 dispatch 污染版本 tag：
-          #   tag 推送           -> 版本 tag + 滚动 tag（2.0.0/lite-2.0.0、ja3-2.0.0/ja3-lite-2.0.0）
-          #   dispatch 勾了 push -> 只滚滚动 tag（latest/lite-latest、ja3-*）
-          #   dispatch 未勾 push -> dev（dev / ja3-dev），给测试用，不碰正式 tag
-          VERSION_TAGS=""
-          WH_VERSION_TAG=""
-          RT_TAGS="${LATEST_TAGS}"
-          WH_TAGS="${WHEELHOUSE_TAGS}"
+          # 标签归属与 qd 一致，两族互斥：
+          #   tag 推送              -> 版本 tag + 滚动 tag（2.0.0 / lite-2.0.0 等）
+          #   main 推送 / dispatch  -> 只推进 dev（dev / dev-wheelhouse）
+          # latest 始终追最近一次 tag，所以只有 tag 推送能移动它。
           if [ "${{ startsWith(github.ref, 'refs/tags/') }}" = "true" ]; then
             VERSION_TAGS="${VERSION_PREFIX}${GITHUB_REF_NAME} ${LITE_VERSION_PREFIX}${GITHUB_REF_NAME}"
             WH_VERSION_TAG="${VERSION_PREFIX}${GITHUB_REF_NAME}-wheelhouse"
-          elif [ "${{ inputs.push }}" != "true" ]; then
+          else
             RT_TAGS="${VERSION_PREFIX}dev"
             WH_TAGS="${VERSION_PREFIX}dev-wheelhouse"
           fi
