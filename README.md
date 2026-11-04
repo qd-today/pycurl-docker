@@ -94,10 +94,11 @@ loong64 构建需 `--build-arg BASE_IMAGE=ghcr.io/loong64/alpine:3.24`（官方 
 | `ja3-latest`、`ja3-lite-latest` | **同一个 manifest**：pycurl（含 `IMPERSONATE`）+ curl-impersonate + BoringSSL |
 | `ja3-<ver>`、`ja3-lite-<ver>` | 同上，按发布版本固定 |
 | `wheelhouse`、`<ver>-wheelhouse` | `scratch` + `/wheels`：不含指纹伪装那条线的 wheel 载体 |
+| `dev`、`lite-dev`、`ja3-dev`、`ja3-lite-dev` | 上面各条线的开发版，跟随 main 分支的最新构建 |
 | `ja3-wheelhouse`、`ja3-<ver>-wheelhouse` | 同上，含指纹伪装 |
 
 `lite` 只是 `latest` 的别名：两个标签由一次 `imagetools create` 挂到同一个 manifest，digest 相同。
-`<ver>` 只在 tag 推送时产出；workflow_dispatch 只更新滚动标签。
+`<ver>` 与 `latest` 只在 tag 推送时产出，latest 始终追最近一次 tag；main 推送与 workflow_dispatch 只推进 dev，不动正式标签与滚动标签。
 
 ## 构建
 

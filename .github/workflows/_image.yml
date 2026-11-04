@@ -127,6 +127,8 @@ jobs:
       full: ${{ steps.plan.outputs.full }}
       skip: ${{ steps.changes.outputs.skip }}
     steps:
+      - name: Self-test CI scripts
+        run: python3 .github/workflows/scripts/selftest.py
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -620,6 +622,10 @@ jobs:
             echo "::endgroup::"
           }
 
+          VERSION_TAGS=""
+          WH_VERSION_TAG=""
+          RT_TAGS="${LATEST_TAGS}"
+          WH_TAGS="${WHEELHOUSE_TAGS}"
           # 标签归属与 qd 一致，两族互斥：
           #   tag 推送              -> 版本 tag + 滚动 tag（2.0.0 / lite-2.0.0 等）
           #   main 推送 / dispatch  -> 只推进 dev（dev / dev-wheelhouse）
