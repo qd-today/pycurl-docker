@@ -129,9 +129,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Checkout
       - name: Self-test CI scripts
         run: python3 .github/workflows/scripts/selftest.py
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
