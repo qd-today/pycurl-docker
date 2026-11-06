@@ -334,6 +334,10 @@ jobs:
           FOSSA_API_KEY: ${{ secrets.FOSSA_API_KEY }}
           FOSSA_MODE: analyze
           FOSSA_PROJECT: pycurl-docker
+          # FOSSA 的 latest / issue 视图是按 **branch** 取的（官方 getProject 的 ref 参数
+          # 默认取项目 default_branch）。两条线共用同一个 branch 会互相顶掉 latest，
+          # 所以主线走 main、ja3 线走 ja3；项目 badge 与计数只跟 default_branch(main) 走。
+          FOSSA_BRANCH: ${{ inputs.line }}
           FOSSA_REVISION: ${{ inputs.line == 'main' && github.ref_name || format('{0}-{1}', github.ref_name, inputs.line) }}
         run: sh .github/workflows/scripts/upload-fossa.sh
 

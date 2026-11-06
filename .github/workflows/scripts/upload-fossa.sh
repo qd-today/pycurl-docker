@@ -28,6 +28,8 @@
 #                   这种不存在的项目并报 Project not found。
 #                   不设则退回 git remote origin，同样会被拼成 custom+ 下的怪名字，所以 CI 必传。
 #   FOSSA_REVISION  版本前缀，建议 "<tag>+<arch>"；默认 git sha
+#   FOSSA_BRANCH    可选，上传归属的分支名。FOSSA 的 latest / issue 视图按分支取
+#                   （默认分支），多条构建线必须各用各的分支，否则互相顶掉 latest。
 #   WHEELHOUSE      wheelhouse 目录，默认 dist/wheels
 #   SBOM_GLOB       sbom 模式的 SBOM 搜索路径，默认 $WHEELHOUSE/sbom/*.cdx.json
 #
@@ -43,6 +45,7 @@ fi
 wheelhouse="${WHEELHOUSE:-dist/wheels}"
 mode="${FOSSA_MODE:-analyze}"
 project="${FOSSA_PROJECT:-}"
+branch="${FOSSA_BRANCH:-}"
 revision="${FOSSA_REVISION:-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)}"
 
 if ! command -v fossa >/dev/null 2>&1; then
@@ -69,6 +72,11 @@ if [ "$mode" != "sbom" ]; then
     set -- analyze "$wheelhouse" --fossa-deps-file "$deps" --revision "$revision" --json
     if [ -n "$project" ]; then
         set -- "$@" --project "$project"
+    fi
+    # --branch 决定这次上传落在哪个分支下。FOSSA 的 latest / issue 视图按分支取，
+    # 两条构建线（main / ja3）不分开的话会互相顶掉 latest。
+    if [ -n "$branch" ]; then
+        set -- "$@" --branch "$branch"
     fi
     if fossa "$@"; then
         echo "FOSSA 上传结束（project=${project:-<git remote>} revision=${revision}）"

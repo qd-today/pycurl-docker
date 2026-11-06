@@ -86,7 +86,10 @@ RUN set -eux; \
     patch -d /tmp/pycurl -p1 < /tmp/pycurl-impersonate.patch; \
     rm -rf /tmp/pycurl-dl /tmp/pycurl-impersonate.patch
 
-COPY src/pack_wheel.py /usr/local/bin/pack_wheel.py
+# 合规模块与许可证全文：pack_wheel.py 在收尾（--compliance）时按同目录 import，
+# 许可证正文从 /usr/local/share/qdpack/licenses 取（缺一份会直接报错，属义务的一部分）。
+COPY src/pack_wheel.py src/compliance.py /usr/local/bin/
+COPY src/licenses /usr/local/share/qdpack/licenses
 
 # openssl-dir 仅编译期需要，指向 superbuild 的依赖 staging 目录（BoringSSL 头文件与静态库）
 RUN set -eux; \
@@ -117,7 +120,7 @@ RUN set -eux; \
 
 
 RUN set -eux; \
-    python3 /usr/local/bin/pack_wheel.py --emit-index --out-dir /wheels; \
+    python3 /usr/local/bin/pack_wheel.py --emit-index --compliance --out-dir /wheels; \
     cd /wheels; \
     sha256sum ./*.whl > SHA256SUMS; \
     ls -l; \
