@@ -106,7 +106,10 @@ RUN set -eux; \
 
 # pycurl 官方只有 sdist（PyPI 无 musllinux 轮子），这里编出 linux_<arch> wheel，交给
 # auditwheel 改标签。--no-build-isolation：用 apk 的 setuptools/wheel，不去 PyPI 再取一遍
-COPY src/pack_wheel.py /usr/local/bin/pack_wheel.py
+# 合规模块与许可证全文：pack_wheel.py 在收尾（--compliance）时按同目录 import。
+# 只进构建阶段，运行镜像里没有这些文件。
+COPY src/pack_wheel.py src/compliance.py /usr/local/bin/
+COPY src/licenses /usr/local/share/qdpack/licenses
 
 RUN set -eux; \
     if [ -n "${PIP_MIRROR}" ]; then pip_args="-i ${PIP_MIRROR}"; else pip_args=""; fi; \
@@ -144,7 +147,7 @@ RUN set -eux; \
 # 注释必须写在 RUN 之前：Docker 把续行拼成一行，行内 # 会把后面的命令整段注释掉，
 # 自检步骤必须整条独立，否则整段会被静默跳过。
 RUN set -eux; \
-    python3 /usr/local/bin/pack_wheel.py --emit-index --out-dir /wheels; \
+    python3 /usr/local/bin/pack_wheel.py --emit-index --compliance --out-dir /wheels; \
     cd /wheels; \
     sha256sum ./*.whl > SHA256SUMS; \
     ls -l; \

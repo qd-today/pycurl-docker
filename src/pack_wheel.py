@@ -154,6 +154,17 @@ def emit_index(root: Path) -> int:
     return 0
 
 
+def run_compliance(out_dir: Path, deny: list[str], allow_unknown: bool = False) -> None:
+    """收尾的合规层：deny 断言 + NOTICE / SOURCE-OFFER / SBOM / 许可证全文。
+
+    单独抽成函数是为了让「拦截」和「文书」都发生在 --emit-index 之前——两者都在
+    wheelhouse 目录上工作，但语义不同：前者是构建门禁，后者是分发时要随附的材料。
+    """
+    import compliance
+
+    compliance.run(out_dir, deny=deny or None, allow_unknown=allow_unknown)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--wheel-dir", help="含 pip wheel 产物（linux_<arch>）的目录")
@@ -161,6 +172,23 @@ def main() -> int:
         "--emit-index",
         action="store_true",
         help="只为 --out-dir 里已有的 wheel 生成 PEP 503 索引（simple/），不打包",
+    )
+    ap.add_argument(
+        "--compliance",
+        action="store_true",
+        help="配合 --emit-index：做 deny 断言并生成 NOTICE / SOURCE-OFFER / SBOM / 许可证全文",
+    )
+    ap.add_argument(
+        "--deny-lib",
+        action="append",
+        default=[],
+        metavar="GLOB",
+        help="禁止随包分发的库（可重复）；默认用 compliance.DEFAULT_DENY",
+    )
+    ap.add_argument(
+        "--allow-unknown",
+        action="store_true",
+        help="允许许可证无法识别的随包库（默认拦下，合规门禁里 unknown 等于未评估）",
     )
     ap.add_argument("--out-dir", required=True, help="wheel 输出目录；--emit-index 时为索引所在目录")
     ap.add_argument(
@@ -182,6 +210,8 @@ def main() -> int:
 
     out_dir = Path(args.out_dir).resolve()
     if args.emit_index:
+        if args.compliance:
+            run_compliance(out_dir, args.deny_lib, args.allow_unknown)
         return emit_index(out_dir)
     return from_wheel_dir(Path(args.wheel_dir).resolve(), out_dir, args.expect_version, args.require_lib)
 
