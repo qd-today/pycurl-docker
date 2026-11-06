@@ -327,14 +327,14 @@ jobs:
         # locator 粘的，apk+libgcc#...$x86_64 与 $aarch64 是两个不同 source，覆盖不了。
         # 许可证义务与架构无关（apk 集合相同，只是 locator 的 arch 字段不同），
         # 所以固定取 linux/amd64 这一个平台。
-        # revision 仍需带 line：本仓 main / ja3 两条线是不同产物（ja3 是打过补丁的 curl），
-        # 两者都会构建 amd64，不区分就会写进同一个 revision 互相覆盖。
+        # revision 命名：主线就叫 <ref>，ja3 线叫 <ref>-ja3。
+        # 必须区分 line——两条线都会构建 amd64，不区分会写进同一个 revision 互相覆盖。
         if: ${{ matrix.platform == 'linux/amd64' }}
         env:
           FOSSA_API_KEY: ${{ secrets.FOSSA_API_KEY }}
           FOSSA_MODE: analyze
           FOSSA_PROJECT: pycurl-docker
-          FOSSA_REVISION: ${{ github.ref_name }}-${{ inputs.line }}
+          FOSSA_REVISION: ${{ inputs.line == 'main' && github.ref_name || format('{0}-{1}', github.ref_name, inputs.line) }}
         run: sh .github/workflows/scripts/upload-fossa.sh
 
   # 第二段：用第一段的产物组装两个出口，推 digest。
