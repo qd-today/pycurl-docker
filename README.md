@@ -133,7 +133,7 @@ docker buildx build --platform linux/arm64 --target wheel-from-artifacts \
 | `PYCURL_VERSION` | `7.49.0` | 与 wheel 名、`SHA256SUMS` 一致 |
 | `CURL_VERSION` | `8.23.0` | 仅 `Dockerfile` |
 | `NGTCP2_VERSION` / `NGHTTP3_VERSION` | `1.25.0` / `1.18.0` | 仅 `Dockerfile` |
-| `CURL_IMPERSONATE_REF` | 固定 commit | 仅 `Dockerfile.ja3` |
+| `CURL_IMPERSONATE_TAG` | `v2.3.2` | 仅 `Dockerfile.ja3`；上游正式 release tag，构建日志会打出解析出的 commit |
 | `AUDITWHEEL_VERSION` | `6.8.2` | 依赖收集与打标 |
 | `APK_MIRROR` | 空 | 本地加速用，如 `https://mirrors.tuna.tsinghua.edu.cn` |
 | `PIP_MIRROR` | 空 | 安装 auditwheel / 取 pycurl sdist 用；空 = 官方 PyPI |
