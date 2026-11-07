@@ -146,7 +146,16 @@ RUN set -eux; \
 # 确保验证的就是这个产物本身。与 runtime 的消费方式（extra-index）无关。
 # 注释必须写在 RUN 之前：Docker 把续行拼成一行，行内 # 会把后面的命令整段注释掉，
 # 自检步骤必须整条独立，否则整段会被静默跳过。
+# 自编库的版本在这里落盘，compliance.py 从 /wheels/component-versions 读，不再靠
+# QD_LIB_VERSIONS 人工补。写这些名字还有第二个作用：出现在这个文件里的组件就是
+# 「我们自己编的」，用来区分「借用 apk 出处的自编 curl」和「apk 原装库」。
 RUN set -eux; \
+    mkdir -p /wheels; \
+    printf '%s\n' \
+        "curl=${CURL_VERSION}" \
+        "ngtcp2=${NGTCP2_VERSION}" \
+        "nghttp3=${NGHTTP3_VERSION}" > /wheels/component-versions; \
+    cat /wheels/component-versions; \
     python3 /usr/local/bin/pack_wheel.py --emit-index --compliance --out-dir /wheels; \
     cd /wheels; \
     sha256sum ./*.whl > SHA256SUMS; \
