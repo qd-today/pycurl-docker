@@ -27,6 +27,10 @@ ARG TARGETARCH
 ARG TARGETVARIANT
 ARG PYCURL_VERSION=7.49.0
 ARG CURL_IMPERSONATE_REF=df38987ca6214c404700b320f853243d9ddb4a06
+# curl-impersonate 该 commit 所在的 curl 代码线版本。它不装 apk 的 libcurl 包，所以
+# 反查不到版本，只能在这里声明——写进 component-versions 供 compliance.py 用，
+# 否则 FOSSA 上这条自编依赖会显示 version: unknown。
+ARG CURL_VERSION=8.23.0
 ARG AUDITWHEEL_VERSION=6.8.2
 
 LABEL maintainer="a76yyyy <q981331502@163.com>"
@@ -119,7 +123,12 @@ RUN set -eux; \
     ls -1 /opt/curl-cli
 
 
+# 自编库的版本落盘给 compliance.py 读（键名是 KNOWN 表里的组件名）。
+# ja3 线没有 apk 的 libcurl 包可反查，curl 的版本只能由这里声明。
 RUN set -eux; \
+    mkdir -p /wheels; \
+    printf '%s\n' "curl=${CURL_VERSION}" > /wheels/component-versions; \
+    cat /wheels/component-versions; \
     python3 /usr/local/bin/pack_wheel.py --emit-index --compliance --out-dir /wheels; \
     cd /wheels; \
     sha256sum ./*.whl > SHA256SUMS; \
